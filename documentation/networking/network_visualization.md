@@ -8,12 +8,16 @@ flowchart TB
         PVE2["Proxmox pve2<br/>10.0.10.12"]
         PVE3["Proxmox pve3<br/>10.0.10.13"]
         PBS["Backup Server<br/>10.0.10.3"]
+        DNSNTP1["DNS + NTP - Primary<br/>10.0.10.4 (on pve1)"]
+        DNSNTP2["DNS + NTP - Secondary<br/>10.0.10.5 (on pve2)"]
 
         ROUTER --- SWITCH
         SWITCH --- PVE1
         SWITCH --- PVE2
         SWITCH --- PVE3
         SWITCH --- PBS
+        SWITCH --- DNSNTP1
+        SWITCH --- DNSNTP2
     end
 
     subgraph VMS["Virtual Machines"]

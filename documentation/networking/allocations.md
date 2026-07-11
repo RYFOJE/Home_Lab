@@ -14,6 +14,8 @@ VLAN 21 -> `10.2.21.0/24`, keeping the scheme self-describing as more projects a
 | Router | Network Device | VLAN 10 | Shared | 10.0.10.1 | Shared gateway - multi-project, not owned by Project 1 |
 | Switch | Network Device | VLAN 10 | Shared | 10.0.10.2 | Shared VLAN trunk mgmt IP (L2 only - does not route) |
 | Proxmox Backup Server | Server | VLAN 10 | Shared | 10.0.10.3 | Backs up VMs/CTs across all projects |
+| DNS + NTP (core-infra-1, Primary) | LXC (on pve1) | VLAN 10 | Shared | 10.0.10.4 | Primary Technitium DNS (authoritative for `home.arpa`, recursive resolver) + chrony (internal NTP source) |
+| DNS + NTP (core-infra-2, Secondary) | LXC (on pve2) | VLAN 10 | Shared | 10.0.10.5 | Secondary Technitium DNS (zone transfer from primary) + independent chrony instance |
 | pve1 (mgmt) | Hypervisor Host | VLAN 10 | Shared | 10.0.10.11 | Shared hypervisor - hosts VMs for multiple projects |
 | pve2 (mgmt) | Hypervisor Host | VLAN 10 | Shared | 10.0.10.12 | Shared hypervisor - hosts VMs for multiple projects |
 | pve3 (mgmt) | Hypervisor Host | VLAN 10 | Shared | 10.0.10.13 | Shared hypervisor - hosts VMs for multiple projects |
@@ -56,3 +58,18 @@ VLAN 21 -> `10.2.21.0/24`, keeping the scheme self-describing as more projects a
   IPs for VLAN 11 and VLAN 12 via 802.1Q sub-interfaces (rows above). Left out of
   `network_visualization.md` to keep that diagram readable - this table is the source of truth
   for gateway ownership.
+- **DNS/NTP placement and redundancy:** runs as two LXCs on VLAN 10 (shared infra), not inside
+  the k3s cluster - DNS/NTP are foundational dependencies and shouldn't go down with the cluster,
+  or with any single hypervisor. The two instances are deliberately split across different
+  Proxmox hosts (pve1, pve2) so losing one host doesn't take down both:
+  - DNS: `10.0.10.4` is primary (authoritative for `home.arpa`); `10.0.10.5` is a secondary zone
+    pulling updates from the primary via zone transfer. Clients should be configured with both
+    as resolvers (primary first).
+  - NTP: both `10.0.10.4` and `10.0.10.5` run independent chrony instances syncing from the
+    public NTP pool - no replication needed, clients just list both as time sources.
+  Root domain is `home.arpa` (RFC 8375) for infra hostnames; a real owned domain should be used
+  for anything published via ingress, since `home.arpa` can't get a publicly-trusted TLS cert.
+  Non-`home.arpa` queries are forwarded upstream to a public resolver.
+- **Firewall rules:** the full rule set required for this network to function - inter-VLAN
+  router ACLs plus documented intra-VLAN traffic - lives in `firewall_rules.yaml` next to this
+  file, not duplicated here.

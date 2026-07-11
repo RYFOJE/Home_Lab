@@ -17,12 +17,18 @@ Deployment_Node(home, "Portfolio Home Network", "Physical Location"){
         Deployment_Node(k8s1, "k8s-node-1", "Debian 12 + k3s VM"){
             Container(k8s1_c, "k3s Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
         }
+        Deployment_Node(core_infra1, "core-infra-1", "Debian 12 LXC"){
+            Container(core_infra1_c, "DNS + NTP (Primary)", "Technitium + chrony", "Primary authoritative DNS for home.arpa; internal NTP source")
+        }
     }
 
     Deployment_Node(pve2, "Proxmox Node 2", "Physical Server"){
         Container(pve2_hv, "Proxmox VE", "Hypervisor", "Hosts VMs")
         Deployment_Node(k8s2, "k8s-node-2", "Debian 12 + k3s VM"){
             Container(k8s2_c, "k3s Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
+        }
+        Deployment_Node(core_infra2, "core-infra-2", "Debian 12 LXC"){
+            Container(core_infra2_c, "DNS + NTP (Secondary)", "Technitium + chrony", "Secondary DNS (zone transfer from primary) + independent NTP source")
         }
     }
 
