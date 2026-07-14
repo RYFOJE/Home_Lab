@@ -1,0 +1,4 @@
+unifi_api_url  = "https://10.0.10.1/"
+unifi_username = "terraform"
+unifi_password = "change-me"
+unifi_insecure = true
