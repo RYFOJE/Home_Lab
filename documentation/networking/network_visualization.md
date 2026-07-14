@@ -1,23 +1,33 @@
 ```mermaid
 flowchart TB
 
+    INET(["Internet"])
+
     subgraph PHYSICAL["Physical Infrastructure - VLAN 10 Mgmt (10.0.10.0/24)"]
-        ROUTER["Router<br/>10.0.10.1 (VLAN 10)<br/>10.1.11.1 (VLAN 11 gw)<br/>10.0.13.1 (VLAN 13 gw)"]
+        ROUTER["Router<br/>10.0.10.1 (VLAN 10)<br/>10.1.11.1 (VLAN 11 gw)<br/>10.0.13.1 (VLAN 13 gw)<br/>10.0.15.1 (VLAN 15 gw)"]
         SWITCH["Switch - L2 trunk only<br/>10.0.10.2"]
+        AP["Wireless AP<br/>mgmt 10.0.10.6<br/>SSIDs: home-mgmt (10), home (13), home-iot (15)"]
         PVE1["Proxmox pve1<br/>10.0.10.11"]
         PVE2["Proxmox pve2<br/>10.0.10.12"]
         PVE3["Proxmox pve3<br/>10.0.10.13"]
         PBS["Backup Server<br/>10.0.10.3"]
 
         ROUTER --- SWITCH
+        SWITCH --- AP
         SWITCH --- PVE1
         SWITCH --- PVE2
         SWITCH --- PVE3
         SWITCH --- PBS
     end
 
-    USERS["Trusted Devices - VLAN 13<br/>10.0.13.0/24<br/>DHCP 10.0.13.100-199"]
+    INET ==>|"WAN - only DNAT:<br/>tcp 80/443 to YARP 10.1.11.50"| ROUTER
+
+    USERS["Trusted Devices - VLAN 13<br/>10.0.13.0/24<br/>DHCP 10.0.13.100-199<br/>(wired + 'home' SSID)"]
     USERS --- SWITCH
+    USERS -.Wi-Fi.- AP
+
+    IOT["IoT Devices - VLAN 15<br/>10.0.15.0/24<br/>DHCP 10.0.15.100-199<br/>('home-iot' SSID)"]
+    IOT -.Wi-Fi.- AP
 
     subgraph SHARED["Shared Services - LXCs on VLAN 10 (bridged via their Proxmox host)"]
         DNSNTP1["core-infra-1<br/>DNS + NTP Primary<br/>10.0.10.4"]
@@ -32,8 +42,11 @@ flowchart TB
         N2["k8s-node-2 (VM)<br/>Control-plane + Worker<br/>eth0 10.1.11.12"]
         N3["k8s-node-3 (VM)<br/>Control-plane + Worker<br/>eth0 10.1.11.13"]
         VIP["API VIP - kube-vip<br/>10.1.11.10"]
-        LB["MetalLB Pool<br/>10.1.11.50-99"]
+        LB["MetalLB Pool<br/>10.1.11.50-249"]
+        YARP["YARP edge proxy (in-cluster)<br/>MetalLB IP 10.1.11.50"]
     end
+
+    ROUTER ==>|"DNAT tcp 80/443"| YARP
 
     PVE1 -->|hosts| N1
     PVE2 -->|hosts| N2
@@ -64,7 +77,12 @@ flowchart TB
 Notes:
 
 - The DNS/NTP LXCs have no cable of their own - they reach the switch through their
-  Proxmox host's bridge (shown as `hosts` edges, not switch links).
+  Proxmox host's bridge.
+- The sole WAN port-forward is tcp 80/443 DNAT to YARP's pinned MetalLB IP (10.1.11.50);
+  YARP runs inside the cluster. Edge design and blast-radius analysis in
+  `wifi_and_isolation.md`.
+- Wi-Fi carries VLANs 10, 13, 15 (one SSID each); VLANs 11/12 are wired-only. SSID mapping
+  and AP config in `wifi_and_isolation.md`.
 - VLAN 12 has **no router sub-interface**: Longhorn traffic never leaves the L2 segment, and
   nothing outside it can route in. Node eth1 interfaces carry an IP + netmask only (no
   gateway). Recommended MTU 9000 on this VLAN only - see `allocations.md` design notes.
