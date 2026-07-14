@@ -1,32 +1,43 @@
 # Homelab Firewall Rule Set
 #
 # Scope: only the rules needed for (1) inter-VLAN / internet routing on the router, and
-# (2) the host-level firewall on each Proxmox box (pve1/pve2/pve3 + PBS). Kubernetes-internal
-# traffic (k3s, Longhorn, etc.) is intentionally out of scope here - this file covers the
-# infrastructure layer only.
+# (2) the host-level firewall on each Proxmox box (pve1/pve2/pve3 + PBS) and the core-infra
+# LXCs. Kubernetes-internal traffic (k3s, Longhorn, etc.) is intentionally out of scope here -
+# this file covers the infrastructure layer only.
 #
 # Format notes:
 #   - One rule per list entry, one field per line - adding/changing/removing a single rule
 #     produces a single, isolated diff hunk instead of a reformatted table.
 #   - Rules are evaluated top to bottom, first match wins, same as a real firewall ruleset.
 #   - `layer` tells you WHERE a rule is actually configured:
-#       router        - crosses a VLAN boundary or goes to the internet; enforced on the
-#                       router-on-a-stick sub-interfaces (10.1.11.1 / 10.1.12.1) or WAN interface.
-#       proxmox-host  - same-subnet (VLAN 10) traffic between Proxmox boxes that a router never
-#                       sees at all. Only enforceable via each host's own firewall - the Proxmox
-#                       VE / PBS built-in firewall (Datacenter/Node level, iptables/nftables
-#                       under the hood).
+#       router        - crosses a VLAN boundary, goes to the internet, or terminates on the
+#                       router itself (its own mgmt interface); enforced on the
+#                       router-on-a-stick sub-interfaces (10.1.11.1 / 10.0.13.1), the WAN
+#                       interface, or the router's input chain.
+#       proxmox-host  - same-subnet (VLAN 10) traffic that a router never sees at all. Only
+#                       enforceable via the Proxmox VE / PBS built-in firewall
+#                       (Datacenter/Node/CT level, iptables/nftables under the hood).
+#                       IMPORTANT: when the PVE firewall is enabled at Datacenter level with
+#                       default-deny, it filters LXC vNICs too - the LXC-FW-* rules below are
+#                       what keep DNS/NTP reachable. Without them, enabling the firewall
+#                       silently breaks name resolution for the whole network.
 #   - `category` tells you WHY a rule exists:
 #       required     - the homelab does not function correctly without this.
 #       hardening    - improves security posture but nothing breaks if you skip it.
+#   - Rule IDs were renumbered when VLAN 13 (Trusted Devices) was added and the VLAN 12
+#     router rules were removed - do not assume IDs are stable across git history.
+#
+# VLAN 12 (Storage/Longhorn) has NO router rules by design: the router sub-interface was
+# removed entirely, so the VLAN is an isolated L2 island with no L3 path in or out. Isolation
+# is structural, not ACL-based. See the design notes in allocations.md.
 #
 # Default posture: default-deny on both layers. Anything not explicitly allowed is denied
-# (see FW-900 for the router, PVE-FW-900 for the Proxmox hosts).
+# (see FW-900 for the router, PVE-FW-900 for the Proxmox hosts and LXCs).
 
 rules:
 
   # =============================================================================
-  # LAYER 1: Inter-VLAN / Internet - enforced on the router
+  # LAYER 1: Inter-VLAN / Internet / Router-input - enforced on the router
   # =============================================================================
 
   # -----------------------------------------------------------------------
@@ -59,7 +70,7 @@ rules:
       the internet independently.
 
   # -----------------------------------------------------------------------
-  # VLAN 10 (Mgmt/Admin) -> VLAN 11 (Workloads)
+  # VLAN 10 (Mgmt/Admin) -> VLAN 11 (Workloads) and the router itself
   # -----------------------------------------------------------------------
   - id: FW-003
     name: admin-to-kube-api
@@ -87,10 +98,122 @@ rules:
       Browser access to anything published via MetalLB/ingress (hosted apps, Longhorn UI,
       dashboards) from the management network.
 
-  # -----------------------------------------------------------------------
-  # Outbound to the internet
-  # -----------------------------------------------------------------------
   - id: FW-005
+    name: admin-to-workloads-icmp
+    layer: router
+    category: hardening
+    action: allow
+    source: VLAN 10 (10.0.10.0/24)
+    destination: VLAN 11 (10.1.11.0/24)
+    protocol: [icmp]
+    ports: [echo-request]
+    rationale: >
+      Optional - lets you ping the k8s nodes, the kube-vip VIP, and MetalLB addresses from
+      the management network when debugging, without opening any real service port.
+
+  - id: FW-006
+    name: admin-to-router-mgmt
+    layer: router
+    category: required
+    action: allow
+    source: VLAN 10 (10.0.10.0/24)
+    destination: 10.0.10.1
+    protocol: [tcp]
+    ports: [443, 22]
+    rationale: >
+      Router web UI and SSH administration, restricted to the management network. This is
+      router-input traffic (terminates on the router), so it is enforced on the router's own
+      input chain even though it never crosses a VLAN. The switch mgmt UI (10.0.10.2) has no
+      equivalent rule: it is intra-VLAN L2 traffic with no enforcement point other than the
+      switch's own ACLs, if it has any - restrict there if supported.
+
+  # -----------------------------------------------------------------------
+  # VLAN 13 (Trusted Devices) -> internal services, then internet
+  # Order matters: specific internal allows first, then deny all other
+  # private ranges, then a broad internet allow.
+  # -----------------------------------------------------------------------
+  - id: FW-007
+    name: trusted-to-dns
+    layer: router
+    category: required
+    action: allow
+    source: VLAN 13 (10.0.13.0/24)
+    destination: [10.0.10.4, 10.0.10.5]
+    protocol: [tcp, udp]
+    ports: [53]
+    rationale: >
+      Personal devices resolve against the internal Technitium servers so home.arpa names
+      work and DNS blocklists apply to them too.
+
+  - id: FW-008
+    name: trusted-to-ntp
+    layer: router
+    category: required
+    action: allow
+    source: VLAN 13 (10.0.13.0/24)
+    destination: [10.0.10.4, 10.0.10.5]
+    protocol: [udp]
+    ports: [123]
+    rationale: Personal devices sync time from the internal chrony sources.
+
+  - id: FW-009
+    name: trusted-to-ingress-and-apps
+    layer: router
+    category: required
+    action: allow
+    source: VLAN 13 (10.0.13.0/24)
+    destination: 10.1.11.50-10.1.11.99
+    protocol: [tcp]
+    ports: [80, 443]
+    rationale: >
+      Browser access from personal devices to anything published via MetalLB/ingress -
+      this is the whole point of hosting apps.
+
+  - id: FW-010
+    name: trusted-to-kube-api
+    layer: router
+    category: required
+    action: allow
+    source: VLAN 13 (10.0.13.0/24)
+    destination: 10.1.11.10
+    protocol: [tcp]
+    ports: [6443]
+    rationale: >
+      kubectl from the daily-driver laptop on the trusted VLAN. Authn/authz still happens
+      at the Kubernetes API layer; this only opens the network path to the VIP.
+
+  - id: FW-011
+    name: deny-trusted-to-private
+    layer: router
+    category: required
+    action: deny
+    source: VLAN 13 (10.0.13.0/24)
+    destination: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+    protocol: any
+    ports: any
+    rationale: >
+      Must precede FW-012. Blocks personal devices from every internal range not explicitly
+      allowed above - in particular the mgmt VLAN (Proxmox/PBS/switch/router UIs) and the k8s
+      node IPs. Without this, the broad internet allow below would open the whole lab.
+
+  - id: FW-012
+    name: trusted-to-internet
+    layer: router
+    category: required
+    action: allow
+    source: VLAN 13 (10.0.13.0/24)
+    destination: any
+    protocol: any
+    ports: any
+    rationale: >
+      General internet access for personal devices - not limited to 80/443 because phones and
+      laptops legitimately use QUIC, mail, VPNs, games, etc. Safe only because FW-011 has
+      already excluded all RFC1918 space.
+
+  # -----------------------------------------------------------------------
+  # Outbound to the internet (infrastructure VLANs)
+  # -----------------------------------------------------------------------
+  - id: FW-013
     name: core-infra-upstream
     layer: router
     category: required
@@ -103,7 +226,7 @@ rules:
       Technitium forwards non-home.arpa queries upstream (53) and needs 443 for
       updates/blocklists; chrony syncs from the public NTP pool (123).
 
-  - id: FW-006
+  - id: FW-014
     name: mgmt-to-internet
     layer: router
     category: required
@@ -112,9 +235,12 @@ rules:
     destination: any
     protocol: [tcp]
     ports: [80, 443]
-    rationale: Proxmox/PBS package updates and subscription checks.
+    rationale: >
+      Proxmox/PBS package updates and subscription checks. DNS and NTP for the hosts are NOT
+      needed here - pve1/pve2/pve3/PBS point at the internal 10.0.10.4/.5 (intra-VLAN 10,
+      never crosses the router; see LXC-FW-001/002).
 
-  - id: FW-007
+  - id: FW-015
     name: workloads-to-internet
     layer: router
     category: required
@@ -126,60 +252,9 @@ rules:
     rationale: Container image pulls and OS package updates from inside the k3s VMs.
 
   # -----------------------------------------------------------------------
-  # Explicit isolation for VLAN 12 (Storage/Longhorn)
-  # -----------------------------------------------------------------------
-  - id: FW-008
-    name: deny-workloads-to-storage
-    layer: router
-    category: required
-    action: deny
-    source: VLAN 11 (10.1.11.0/24)
-    destination: VLAN 12 (10.1.12.0/24)
-    protocol: any
-    ports: any
-    rationale: >
-      Longhorn's storage-network feature deliberately isolates replica/engine data-plane
-      traffic onto VLAN 12; nothing on the workload plane should ever reach it directly.
-
-  - id: FW-009
-    name: deny-mgmt-to-storage
-    layer: router
-    category: required
-    action: deny
-    source: VLAN 10 (10.0.10.0/24)
-    destination: VLAN 12 (10.1.12.0/24)
-    protocol: any
-    ports: any
-    rationale: Management plane has no legitimate reason to reach the storage NICs directly.
-
-  - id: FW-010
-    name: allow-mgmt-to-storage-icmp
-    layer: router
-    category: hardening
-    action: allow
-    source: VLAN 10 (10.0.10.0/24)
-    destination: VLAN 12 (10.1.12.0/24)
-    protocol: [icmp]
-    ports: [echo-request]
-    rationale: >
-      Optional - lets you ping storage NICs from the management network for diagnostics
-      without opening any real service port. Evaluated before FW-009.
-
-  - id: FW-011
-    name: deny-storage-egress
-    layer: router
-    category: required
-    action: deny
-    source: VLAN 12 (10.1.12.0/24)
-    destination: any (outside VLAN 12)
-    protocol: any
-    ports: any
-    rationale: Storage NICs should never need to initiate a connection off their own subnet.
-
-  # -----------------------------------------------------------------------
   # Catch-alls
   # -----------------------------------------------------------------------
-  - id: FW-012
+  - id: FW-016
     name: deny-vlan1
     layer: router
     category: required
@@ -256,8 +331,10 @@ rules:
     ports: [8007]
     rationale: >
       Backup jobs from each Proxmox VE host to Proxmox Backup Server. Enforced as an inbound
-      allow on PBS's own firewall (source = the three pve IPs specifically, not all of VLAN 10);
-      PVE's outbound is open by default unless egress has also been locked down.
+      allow on PBS's own firewall. NOTE: today this is technically shadowed by PVE-FW-005
+      (all of VLAN 10 -> 8007) - it is kept as a separate rule deliberately, so that if
+      PVE-FW-005 is ever tightened to specific admin-workstation IPs, backups keep working
+      without anyone having to remember this dependency.
 
   - id: PVE-FW-005
     name: admin-to-pbs-webui
@@ -268,7 +345,10 @@ rules:
     destination: 10.0.10.3
     protocol: [tcp]
     ports: [8007]
-    rationale: Proxmox Backup Server web UI/API access (same port serves both), restricted to the management network.
+    rationale: >
+      Proxmox Backup Server web UI/API access (same port serves both), restricted to the
+      management network. Candidate for tightening to specific admin IPs later - PVE-FW-004
+      exists precisely so that tightening this doesn't break backups.
 
   - id: PVE-FW-006
     name: admin-to-hosts-icmp
@@ -282,18 +362,98 @@ rules:
     rationale: Optional - basic ping diagnostics from the management network.
 
   - id: PVE-FW-007
-    name: deny-workloads-storage-to-hosts
+    name: deny-workloads-to-hosts
     layer: proxmox-host
     category: hardening
     action: deny
-    source: [VLAN 11 (10.1.11.0/24), VLAN 12 (10.1.12.0/24)]
+    source: VLAN 11 (10.1.11.0/24)
     destination: [10.0.10.11, 10.0.10.12, 10.0.10.13, 10.0.10.3]
     protocol: any
     ports: any
     rationale: >
       Defense-in-depth: the router should already block this, but the hosts themselves
-      refusing connections from the workload/storage VLANs closes the gap if a router ACL
-      is ever misconfigured.
+      refusing connections from the workload VLAN closes the gap if a router ACL is ever
+      misconfigured. (VLAN 12 no longer needs listing here - with its router sub-interface
+      removed, storage traffic has no L3 path to reach these hosts at all.)
+
+  # -----------------------------------------------------------------------
+  # core-infra LXC vNIC rules (Technitium DNS + chrony on 10.0.10.4/.5)
+  # Same enforcement stack as the host rules (PVE firewall, CT level), but
+  # applied to the LXC vNICs. These are what keep DNS/NTP reachable once the
+  # Datacenter-level firewall defaults to deny - without them, enabling the
+  # firewall breaks name resolution and time sync for the entire network.
+  # -----------------------------------------------------------------------
+
+  - id: LXC-FW-001
+    name: dns-inbound
+    layer: proxmox-host
+    category: required
+    action: allow
+    source: [VLAN 10 (10.0.10.0/24), VLAN 11 (10.1.11.0/24), VLAN 13 (10.0.13.0/24)]
+    destination: [10.0.10.4, 10.0.10.5]
+    protocol: [tcp, udp]
+    ports: [53]
+    rationale: >
+      DNS queries from every client population: Proxmox hosts + PBS (intra-VLAN 10, the
+      router never sees these), k8s nodes (VLAN 11, also allowed at the router by FW-001),
+      and personal devices (VLAN 13, allowed at the router by FW-007). The router-layer
+      rules alone are NOT sufficient - intra-VLAN 10 queries only hit this rule.
+
+  - id: LXC-FW-002
+    name: ntp-inbound
+    layer: proxmox-host
+    category: required
+    action: allow
+    source: [VLAN 10 (10.0.10.0/24), VLAN 11 (10.1.11.0/24), VLAN 13 (10.0.13.0/24)]
+    destination: [10.0.10.4, 10.0.10.5]
+    protocol: [udp]
+    ports: [123]
+    rationale: >
+      chrony time sync from the same three client populations as LXC-FW-001. Proxmox hosts
+      and PBS must use these internal sources (accurate time matters for corosync and for
+      backup timestamps).
+
+  - id: LXC-FW-003
+    name: dns-zone-transfer
+    layer: proxmox-host
+    category: required
+    action: allow
+    source: [10.0.10.4, 10.0.10.5]
+    destination: [10.0.10.4, 10.0.10.5]
+    protocol: [tcp, udp]
+    ports: [53]
+    rationale: >
+      Zone replication between the Technitium instances: the secondary (10.0.10.5) pulls
+      AXFR/IXFR from the primary over TCP 53; the primary sends NOTIFY to the secondary on
+      53. Technically already matched by LXC-FW-001 today (both IPs are in VLAN 10), but
+      kept explicit so that tightening LXC-FW-001's sources later can't silently break
+      replication.
+
+  - id: LXC-FW-004
+    name: admin-to-technitium-webui
+    layer: proxmox-host
+    category: required
+    action: allow
+    source: VLAN 10 (10.0.10.0/24)
+    destination: [10.0.10.4, 10.0.10.5]
+    protocol: [tcp]
+    ports: [5380]
+    rationale: >
+      Technitium admin web console (default HTTP port 5380; adjust if TLS is enabled on
+      53443/443). Without this rule there is no way to manage DNS at all once the firewall
+      is enabled with default-deny. Restricted to the management network - deliberately NOT
+      reachable from VLAN 13; DNS administration happens from a VLAN 10 admin machine.
+
+  - id: LXC-FW-005
+    name: admin-to-core-infra-icmp
+    layer: proxmox-host
+    category: hardening
+    action: allow
+    source: VLAN 10 (10.0.10.0/24)
+    destination: [10.0.10.4, 10.0.10.5]
+    protocol: [icmp]
+    ports: [echo-request]
+    rationale: Optional - ping diagnostics for the DNS/NTP containers from the management network.
 
   - id: PVE-FW-900
     name: default-deny-inbound
@@ -306,4 +466,5 @@ rules:
     ports: any
     rationale: >
       Each host's firewall default input policy should be DROP, with only the explicit
-      allows above as exceptions.
+      allows above as exceptions. This applies to the LXC vNICs as well when the firewall
+      is enabled at Datacenter level - which is exactly why the LXC-FW-* rules exist.
