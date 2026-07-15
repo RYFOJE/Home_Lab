@@ -34,6 +34,9 @@ variable "rules" {
     dst_address           = optional(string)
     dst_address_group_key = optional(string)
     dst_port              = optional(string)
+
+    state_established = optional(bool)
+    state_related     = optional(bool)
   }))
   default = {}
 }

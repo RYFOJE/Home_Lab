@@ -26,10 +26,10 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 | Router (VLAN 15 sub-if) | Network Device | VLAN 15 | Shared | 10.0.15.1 | Trunk sub-interface gateway for the IoT VLAN |
 | Trusted device DHCP pool | DHCP Pool | VLAN 13 | Shared | 10.0.13.100 - 10.0.13.199 | Personal laptops/phones/workstations; DHCP-assigned |
 | IoT device DHCP pool | DHCP Pool | VLAN 15 | Shared | 10.0.15.100 - 10.0.15.199 | Smart-home devices on the `home-iot` SSID; DHCP-assigned |
-| Kubernetes API VIP (kube-vip) | Virtual IP | VLAN 11 | Project 1 | 10.1.11.10 | Floats across the 3 combined control-plane/worker nodes |
-| k8s-node-1 (eth0) | VM - k3s Node | VLAN 11 | Project 1 | 10.1.11.11 | Combined control-plane + worker; runs on pve1 |
-| k8s-node-2 (eth0) | VM - k3s Node | VLAN 11 | Project 1 | 10.1.11.12 | Combined control-plane + worker; runs on pve2 |
-| k8s-node-3 (eth0) | VM - k3s Node | VLAN 11 | Project 1 | 10.1.11.13 | Combined control-plane + worker; runs on pve3 |
+| Kubernetes API VIP (Talos-native) | Virtual IP | VLAN 11 | Project 1 | 10.1.11.10 | Floats across the 3 combined control-plane/worker nodes; managed by Talos |
+| k8s-node-1 (eth0) | VM - Talos Node | VLAN 11 | Project 1 | 10.1.11.11 | Combined control-plane + worker; runs on pve1 |
+| k8s-node-2 (eth0) | VM - Talos Node | VLAN 11 | Project 1 | 10.1.11.12 | Combined control-plane + worker; runs on pve2 |
+| k8s-node-3 (eth0) | VM - Talos Node | VLAN 11 | Project 1 | 10.1.11.13 | Combined control-plane + worker; runs on pve3 |
 | MetalLB Pool | LoadBalancer Pool | VLAN 11 | Project 1 | 10.1.11.50 - 10.1.11.249 | Pool for LoadBalancer-type Services (e.g. ingress-nginx); 200 addresses |
 | YARP edge proxy | LoadBalancer Service | VLAN 11 | Project 1 | 10.1.11.50 | Public reverse proxy running in-cluster; pinned first pool IP; sole WAN DNAT target (80/443). See `wifi_and_isolation.md` |
 | k8s-node-1 (eth1) | VM - Storage NIC | VLAN 12 | Project 1 | 10.1.12.11 | Dedicated Longhorn interface; same VM as k8s-node-1. **No gateway configured** (see design notes) |
@@ -42,7 +42,7 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 |---|---|---|---|---|---|---|
 | VLAN 1 | *(unused - default/native VLAN, intentionally left untagged)* | - | - | - | - | Not used for any traffic, to reduce VLAN-hopping exposure |
 | VLAN 10 | Shared Infrastructure Mgmt | Shared (multi-project) | 10.0.10.0/24 | 10.0.10.1 | 254 | Proxmox host mgmt, PBS, router/switch mgmt, corosync |
-| VLAN 11 | Kubernetes / Workloads | Project 1 | 10.1.11.0/24 | 10.1.11.1 (router sub-if) | 254 | k3s node primary interfaces, kube-vip API VIP, MetalLB pool |
+| VLAN 11 | Kubernetes / Workloads | Project 1 | 10.1.11.0/24 | 10.1.11.1 (router sub-if) | 254 | Talos node primary interfaces, Talos-native API VIP, MetalLB pool |
 | VLAN 12 | Storage / Longhorn | Project 1 | 10.1.12.0/24 | **none - L2-only, no gateway** | 254 | Dedicated Longhorn replica/engine traffic via Multus storage-network. Isolated L2 island: no router sub-interface, unreachable from other VLANs by construction |
 | VLAN 13 | Trusted Devices | Shared (multi-project) | 10.0.13.0/24 | 10.0.13.1 (router sub-if) | 254 | Personal laptops/phones/workstations. Keeps daily-driver devices off the mgmt VLAN; access limited to published services, kube API, DNS/NTP, and the internet (see `firewall_rules.yaml`) |
 | VLAN 15 | IoT Devices | Shared (multi-project) | 10.0.15.0/24 | 10.0.15.1 (router sub-if) | 254 | Smart-home devices via the `home-iot` SSID. Internet + internal DNS only; no path to published apps, the kube API, or any other VLAN (see `wifi_and_isolation.md`) |
@@ -51,8 +51,8 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 
 | Range Name | CIDR | Scope | Purpose | Notes |
 |---|---|---|---|---|
-| Pod CIDR | 10.1.200.0/22 | Project 1 (virtual) | Kubernetes pod-to-pod networking (CNI overlay) | Requires `--cluster-cidr` override at k3s install; default is `10.42.0.0/16`. **Capacity ceiling:** at the default /24-per-node allocation, a /22 supports a maximum of 4 nodes - the current 3 plus exactly one more. Before adding a 5th node, either widen to /21 (would require redeploying the CNI) or shrink the per-node mask via `--kube-controller-manager-arg=node-cidr-mask-size=25`. |
-| Service CIDR | 10.1.204.0/24 | Project 1 (virtual) | Kubernetes ClusterIP service addresses | Requires `--service-cidr` override at k3s install; default is `10.43.0.0/16`. |
+| Pod CIDR | 10.1.200.0/22 | Project 1 (virtual) | Kubernetes pod-to-pod networking (CNI overlay) | Set via `cluster.network.podSubnets` in the Talos machine config (`terraform/30-talos`); Talos default is `10.244.0.0/16`. **Capacity ceiling:** at the default /24-per-node allocation, a /22 supports a maximum of 4 nodes - the current 3 plus exactly one more. Before adding a 5th node, either widen to /21 (would require redeploying the CNI) or shrink the per-node mask via a `node-cidr-mask-size=25` controller-manager arg. |
+| Service CIDR | 10.1.204.0/24 | Project 1 (virtual) | Kubernetes ClusterIP service addresses | Set via `cluster.network.serviceSubnets` in the Talos machine config (`terraform/30-talos`); Talos default is `10.96.0.0/12`. |
 
 ## Design Notes
 
@@ -93,7 +93,7 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 - **Wi-Fi carries VLANs 10, 13, 15 (one SSID each); VLANs 11/12 are wired-only.** SSID
   mapping and AP config in `wifi_and_isolation.md`.
 - **DNS/NTP placement and redundancy:** runs as two LXCs on VLAN 10 (shared infra), not inside
-  the k3s cluster - DNS/NTP are foundational dependencies and shouldn't go down with the cluster,
+  the Talos cluster - DNS/NTP are foundational dependencies and shouldn't go down with the cluster,
   or with any single hypervisor. The two instances are deliberately split across different
   Proxmox hosts (pve1, pve2) so losing one host doesn't take down both:
   - DNS: `10.0.10.4` is primary (authoritative for `home.arpa`); `10.0.10.5` is a secondary zone

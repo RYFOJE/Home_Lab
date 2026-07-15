@@ -33,9 +33,18 @@ module "vlans" {
 module "wlans" {
   source = "./modules/wlans"
   wlans = {
-    for k, v in var.wlan_configs : k => merge(v, {
-      passphrase = data.azurerm_key_vault_secret.wlan_passphrase[k].value
-    })
+    for k, v in var.wlan_configs : k => {
+      name = v.name
+      # Resolving network_key -> unifi_network id also orders SSIDs after their VLANs.
+      network_id       = module.vlans.networks[v.network_key].id
+      user_group_id    = v.user_group_id
+      security         = v.security
+      passphrase       = data.azurerm_key_vault_secret.wlan_passphrase[k].value
+      wpa3_support     = v.wpa3_support
+      wpa3_transition  = v.wpa3_transition
+      client_isolation = v.client_isolation
+      wlan_band        = v.wlan_band
+    }
   }
 }
 

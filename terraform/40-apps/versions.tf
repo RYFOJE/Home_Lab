@@ -5,7 +5,7 @@ terraform {
     resource_group_name  = "terraform"
     storage_account_name = "rjterraform"
     container_name       = "london"
-    key                  = "30-kubernetes.tfstate"
+    key                  = "40-apps.tfstate"
     use_azuread_auth     = true
   }
 
@@ -17,6 +17,10 @@ terraform {
     helm = {
       source  = "hashicorp/helm"
       version = "~> 2.17"
+    }
+    kubectl = {
+      source  = "alekc/kubectl" # maintained fork of gavinbunney/kubectl
+      version = "~> 2.1"
     }
   }
 }

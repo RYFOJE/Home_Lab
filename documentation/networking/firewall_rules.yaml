@@ -2,7 +2,7 @@
 #
 # Scope: only the rules needed for (1) inter-VLAN / internet routing on the router, and
 # (2) the host-level firewall on each Proxmox box (pve1/pve2/pve3 + PBS) and the core-infra
-# LXCs. Kubernetes-internal traffic (k3s, Longhorn, YARP NetworkPolicies, etc.) is out of
+# LXCs. Kubernetes-internal traffic (Kubernetes, Longhorn, YARP NetworkPolicies, etc.) is out of
 # scope - this file covers the infrastructure layer only.
 #
 # Format notes:
@@ -82,7 +82,7 @@ rules:
     protocol: [tcp]
     ports: [6443]
     rationale: >
-      kubectl / Kubernetes API access to the kube-vip control-plane VIP from a management
+      kubectl / Kubernetes API access to the Talos-native control-plane VIP from a management
       workstation or jump host sitting on VLAN 10 (wired or the home-mgmt SSID).
 
   - id: FW-004
@@ -108,7 +108,7 @@ rules:
     protocol: [icmp]
     ports: [echo-request]
     rationale: >
-      Ping diagnostics against the k8s nodes, kube-vip VIP, and MetalLB addresses without
+      Ping diagnostics against the k8s nodes, control-plane VIP, and MetalLB addresses without
       opening any real service port.
 
   - id: FW-006
@@ -250,7 +250,7 @@ rules:
     protocol: [tcp]
     ports: [80, 443]
     rationale: >
-      Container image pulls and OS package updates from inside the k3s VMs. Also covers
+      Container image pulls and OS package updates from inside the Talos node VMs. Also covers
       YARP's outbound needs (ACME cert issuance/renewal) since YARP runs in-cluster.
 
   # -----------------------------------------------------------------------

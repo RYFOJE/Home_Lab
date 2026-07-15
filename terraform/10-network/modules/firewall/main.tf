@@ -32,4 +32,7 @@ resource "unifi_firewall_rule" "this" {
   dst_address            = each.value.dst_address
   dst_firewall_group_ids = each.value.dst_address_group_key != null ? [unifi_firewall_group.address[each.value.dst_address_group_key].id] : null
   dst_port               = each.value.dst_port
+
+  state_established = each.value.state_established
+  state_related     = each.value.state_related
 }

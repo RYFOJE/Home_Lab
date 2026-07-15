@@ -1,7 +1,0 @@
-proxmox_endpoint   = "https://10.0.10.11:8006/"
-proxmox_insecure   = true
-
-# Secret (proxmox-api-token) lives in Azure Key Vault, read via
-# data.azurerm_key_vault_secret in main.tf -- not a local var anymore.
-key_vault_name                = "rj-london"
-key_vault_resource_group_name = "terraform"

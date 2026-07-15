@@ -28,8 +28,9 @@ variable "networks" {
   description = "VLANs to create. See modules/vlans for shape. Populate from documentation/networking/allocations.md."
   type = map(object({
     name         = string
+    purpose      = optional(string, "corporate") # "vlan-only" = L2 only, no gateway sub-interface
     vlan         = number
-    subnet       = string
+    subnet       = optional(string) # omit for vlan-only networks
     dhcp_enabled = bool
     dhcp_start   = optional(string)
     dhcp_stop    = optional(string)
@@ -41,12 +42,13 @@ variable "wlan_configs" {
   description = "Non-secret SSID settings, keyed by internal id. Safe to commit / set in a checked-in tfvars. Passphrases come from wlan_passphrases instead."
   type = map(object({
     name             = string
-    vlan             = number
+    network_key      = string # key into var.networks; resolved to the unifi_network id in main.tf
     user_group_id    = string
     security         = string
     wpa3_support     = optional(bool, false)
     wpa3_transition  = optional(bool, false)
     client_isolation = optional(bool, false)
+    wlan_band        = optional(string) # e.g. "2g"; null = all bands
   }))
   default = {}
 }
@@ -87,6 +89,9 @@ variable "firewall_rules" {
     dst_address           = optional(string)
     dst_address_group_key = optional(string)
     dst_port              = optional(string)
+
+    state_established = optional(bool)
+    state_related     = optional(bool)
   }))
   default = {}
 }

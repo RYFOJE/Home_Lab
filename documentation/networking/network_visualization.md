@@ -37,11 +37,11 @@ flowchart TB
     PVE1 -->|hosts| DNSNTP1
     PVE2 -->|hosts| DNSNTP2
 
-    subgraph K8S["Kubernetes Cluster (k3s) - VLAN 11 Workloads (10.1.11.0/24)"]
+    subgraph K8S["Kubernetes Cluster (Talos) - VLAN 11 Workloads (10.1.11.0/24)"]
         N1["k8s-node-1 (VM)<br/>Control-plane + Worker<br/>eth0 10.1.11.11"]
         N2["k8s-node-2 (VM)<br/>Control-plane + Worker<br/>eth0 10.1.11.12"]
         N3["k8s-node-3 (VM)<br/>Control-plane + Worker<br/>eth0 10.1.11.13"]
-        VIP["API VIP - kube-vip<br/>10.1.11.10"]
+        VIP["API VIP - Talos-native<br/>10.1.11.10"]
         LB["MetalLB Pool<br/>10.1.11.50-249"]
         YARP["YARP edge proxy (in-cluster)<br/>MetalLB IP 10.1.11.50"]
     end

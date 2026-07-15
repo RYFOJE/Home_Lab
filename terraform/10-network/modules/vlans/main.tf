@@ -2,13 +2,14 @@ resource "unifi_network" "this" {
   for_each = var.networks
 
   name    = each.value.name
-  purpose = "corporate"
+  purpose = each.value.purpose
   vlan    = each.value.vlan
   subnet  = each.value.subnet
 
-  dhcp_server = {
-    enabled = each.value.dhcp_enabled
-    start   = each.value.dhcp_enabled ? each.value.dhcp_start : null
-    stop    = each.value.dhcp_enabled ? each.value.dhcp_stop : null
-  }
+  # vlan-only networks have no L3 interface, so no DHCP config is sent.
+  dhcp_server = each.value.dhcp_enabled ? {
+    enabled = true
+    start   = each.value.dhcp_start
+    stop    = each.value.dhcp_stop
+  } : null
 }

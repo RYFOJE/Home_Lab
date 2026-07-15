@@ -9,8 +9,8 @@
 key_vault_name                = "rj-london"
 key_vault_resource_group_name = "terraform"
 
-unifi_api_url  = "https://10.1.10.1/" # PLACEHOLDER: confirm controller URL (UDM/CloudKey IP)
-unifi_username = "ryfoje"          # PLACEHOLDER: local controller user created for Terraform
+unifi_api_url  = "https://10.1.0.1/" # PLACEHOLDER: confirm controller URL (UDM/CloudKey IP)
+unifi_username = "ryfoje"            # PLACEHOLDER: local controller user created for Terraform
 
 # -----------------------------------------------------------------------
 # VLANs (documentation/networking/allocations.md)
@@ -26,17 +26,15 @@ networks = {
     name         = "Workloads"
     vlan         = 11
     subnet       = "10.1.11.0/24"
-    dhcp_enabled = false # k8s nodes, kube-vip VIP, MetalLB pool are all statically assigned
+    dhcp_enabled = false # k8s nodes, control-plane VIP, MetalLB pool are all statically assigned
   }
   storage = {
     name         = "Storage"
+    purpose      = "vlan-only" # no gateway sub-interface -- isolated L2 island per allocations.md
     vlan         = 12
-    subnet       = "10.1.12.0/24"
     dhcp_enabled = false
-    # TODO: allocations.md specifies this VLAN has NO router sub-interface / no gateway
-    # (isolated L2 island). Verify how to express that with this provider -- the
-    # unifi_network resource may need a different `purpose` or routing setting to
-    # avoid creating a gateway automatically. Not yet confirmed against the schema.
+    # No subnet: vlan-only networks carry no L3 config. Addressing (10.1.12.0/24)
+    # is set statically on the VM NICs by 20-proxmox / 30-talos.
   }
   trusted = {
     name         = "Trusted Devices"
@@ -64,25 +62,26 @@ networks = {
 wlan_configs = {
   home = {
     name             = "home"
-    vlan             = 13
+    network_key      = "trusted"                           # VLAN 13
     user_group_id    = "PLACEHOLDER_default_user_group_id" # TODO: look up in controller: Settings > Profiles > User Groups > Default
     security         = "wpapsk"
     wpa3_support     = true
-    wpa3_transition  = true
+    wpa3_transition  = true # WPA3-only, no WPA2 fallback
     client_isolation = false
   }
   home_iot = {
     name             = "home-iot"
-    vlan             = 15
+    network_key      = "iot" # VLAN 15
     user_group_id    = "PLACEHOLDER_default_user_group_id"
     security         = "wpapsk"
     wpa3_support     = false
     wpa3_transition  = false
     client_isolation = true
+    wlan_band        = "2g" # wifi_and_isolation.md: IoT SSID is 2.4 GHz only
   }
   home_mgmt = {
     name             = "home-mgmt"
-    vlan             = 10
+    network_key      = "mgmt" # VLAN 10
     user_group_id    = "PLACEHOLDER_default_user_group_id"
     security         = "wpapsk"
     wpa3_support     = true
@@ -98,6 +97,16 @@ wlan_configs = {
 # The PVE-FW-* and LXC-FW-* rules run on Proxmox's own firewall, not UniFi --
 # out of scope for this module.
 #
+# RULESET MODEL: everything lives in LAN_IN as one sequential first-match-wins
+# list, mirroring firewall_rules.yaml order. LAN_IN sees all traffic entering
+# the router from a LAN VLAN -- both inter-VLAN and internet-bound -- so the
+# internet allows sit here too (in WAN_OUT they would be unreachable behind the
+# FW-900 drop, since LAN_IN is evaluated first). FW-000 accepts established/
+# related up front so the FW-900 drop-all can't break stateful return traffic.
+# FW-006 is the sole LAN_LOCAL rule (traffic terminating on the router).
+# Deliberately NO drop-all in LAN_LOCAL: it would break DHCP for VLANs 13/15
+# and router mgmt; the controller default handles that chain.
+#
 # NOT MODELED, and why:
 #   FW-017 (wan-dnat-to-yarp)   -- this is a port-forward/DNAT, not a plain
 #                                  firewall rule. Needs a `unifi_port_forward`
@@ -105,22 +114,16 @@ wlan_configs = {
 #   FW-021 (deny-vlan1)         -- VLAN 1 is deliberately left unconfigured
 #                                  (no network object exists to reference).
 #                                  Structural/manual only.
-#   FW-900 (default-deny)       -- assumed covered by each ruleset's default
-#                                  policy in the controller (Settings >
-#                                  Firewall & Security). TODO: verify.
 #
-# UNVERIFIED ASSUMPTIONS (check against the provider schema / a plan before applying):
-#   - `ruleset` values (LAN_IN / LAN_LOCAL / WAN_OUT) are a best guess at how
-#     UniFi zones this rule set; may need adjustment.
-#   - `protocol = "tcp_udp"` assumed to be a valid combined value.
+# REMAINING ASSUMPTIONS (check against a plan before applying):
 #   - FW-004/FW-009 destination is the MetalLB pool 10.1.11.50-10.1.11.249,
 #     which doesn't cleanly express as a CIDR. Approximated here as the whole
 #     10.1.11.0/24 subnet -- looser than the source doc. Tighten once you
 #     confirm how this provider models IP ranges (likely an address-group
 #     listing each IP, or it may not support ranges at all).
-#   - `rule_index` values are placeholders in the 2000s (LAN) / 3000s (WAN OUT)
-#     ranges per UniFi convention -- verify they don't collide with existing
-#     manual rules on the controller before applying.
+#   - `rule_index` values 2000-2999 (user LAN_IN range per UniFi convention) --
+#     verify they don't collide with existing manual rules on the controller
+#     before applying.
 # -----------------------------------------------------------------------
 
 firewall_address_groups = {
@@ -141,6 +144,17 @@ firewall_address_groups = {
 firewall_port_groups = {}
 
 firewall_rules = {
+  "FW-000" = {
+    name              = "allow-established-related"
+    action            = "accept"
+    ruleset           = "LAN_IN"
+    rule_index        = 2000
+    protocol          = "all"
+    state_established = true
+    state_related     = true
+    # firewall_rules.yaml: "stateful firewall -- return traffic implied".
+    # Must precede FW-900 so replies to allowed flows are never dropped.
+  }
   "FW-001" = {
     name                  = "workloads-to-dns"
     action                = "accept"
@@ -252,17 +266,18 @@ firewall_rules = {
   "FW-012" = {
     name        = "trusted-to-internet"
     action      = "accept"
-    ruleset     = "WAN_OUT"
-    rule_index  = 3001
+    ruleset     = "LAN_IN"
+    rule_index  = 2012
     protocol    = "all"
     src_address = "10.0.13.0/24"
-    # dst intentionally unset = any/internet
+    # dst unset = anything; safe only because FW-011 (2011) already dropped
+    # all RFC1918 space for this source.
   }
   "FW-013" = {
     name                  = "core-infra-upstream"
     action                = "accept"
-    ruleset               = "WAN_OUT"
-    rule_index            = 3002
+    ruleset               = "LAN_IN"
+    rule_index            = 2013
     protocol              = "tcp_udp"
     src_address_group_key = "dns_ntp"
     dst_port              = "53,123,443"
@@ -270,8 +285,8 @@ firewall_rules = {
   "FW-014" = {
     name        = "mgmt-to-internet"
     action      = "accept"
-    ruleset     = "WAN_OUT"
-    rule_index  = 3003
+    ruleset     = "LAN_IN"
+    rule_index  = 2014
     protocol    = "tcp"
     src_address = "10.0.10.0/24"
     dst_port    = "80,443"
@@ -279,8 +294,8 @@ firewall_rules = {
   "FW-015" = {
     name        = "workloads-to-internet"
     action      = "accept"
-    ruleset     = "WAN_OUT"
-    rule_index  = 3004
+    ruleset     = "LAN_IN"
+    rule_index  = 2015
     protocol    = "tcp"
     src_address = "10.1.11.0/24"
     dst_port    = "80,443"
@@ -289,7 +304,7 @@ firewall_rules = {
     name                  = "workloads-to-longhorn-backup"
     action                = "accept"
     ruleset               = "LAN_IN"
-    rule_index            = 2012
+    rule_index            = 2016
     protocol              = "tcp"
     src_address_group_key = "k8s_nodes"
     dst_address           = "10.0.10.3"
@@ -299,7 +314,7 @@ firewall_rules = {
     name                  = "iot-to-dns"
     action                = "accept"
     ruleset               = "LAN_IN"
-    rule_index            = 2013
+    rule_index            = 2018
     protocol              = "tcp_udp"
     src_address           = "10.0.15.0/24"
     dst_address_group_key = "dns_ntp"
@@ -309,17 +324,28 @@ firewall_rules = {
     name                  = "deny-iot-to-private"
     action                = "drop"
     ruleset               = "LAN_IN"
-    rule_index            = 2014
+    rule_index            = 2019
     protocol              = "all"
     src_address           = "10.0.15.0/24"
     dst_address_group_key = "private_ranges"
+    # Must precede FW-020, same allow/deny/allow pattern as FW-011/012.
   }
   "FW-020" = {
     name        = "iot-to-internet"
     action      = "accept"
-    ruleset     = "WAN_OUT"
-    rule_index  = 3005
+    ruleset     = "LAN_IN"
+    rule_index  = 2020
     protocol    = "all"
     src_address = "10.0.15.0/24"
+  }
+  "FW-900" = {
+    name       = "default-deny"
+    action     = "drop"
+    ruleset    = "LAN_IN"
+    rule_index = 2900
+    protocol   = "all"
+    # Final catch-all: anything a LAN VLAN sends at the router that no rule
+    # above allowed is dropped. UniFi's LAN_IN default is accept, so without
+    # this rule the whole posture is silently allow-by-default.
   }
 }
