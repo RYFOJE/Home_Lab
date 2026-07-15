@@ -3,10 +3,14 @@ variable "proxmox_endpoint" {
   type        = string
 }
 
-variable "proxmox_api_token" {
-  description = "Proxmox VE API token, in the form 'user@realm!token-name=uuid'"
+variable "key_vault_name" {
+  description = "Name of the Azure Key Vault holding this layer's secrets"
   type        = string
-  sensitive   = true
+}
+
+variable "key_vault_resource_group_name" {
+  description = "Resource group containing key_vault_name"
+  type        = string
 }
 
 variable "proxmox_insecure" {

@@ -1,6 +1,14 @@
 terraform {
   required_version = ">= 1.7.0"
 
+  backend "azurerm" {
+    resource_group_name  = "terraform"
+    storage_account_name = "rjterraform"
+    container_name       = "london"
+    key                  = "30-kubernetes.tfstate"
+    use_azuread_auth     = true
+  }
+
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
