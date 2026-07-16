@@ -76,7 +76,7 @@ flowchart LR
     end
 
     AP["Access Point<br/>mgmt IP 10.0.10.6 (VLAN 10)"]
-    SW["Switch<br/>AP trunk port: tagged 10, 13, 15<br/>native VLAN: none (VLAN 1 unused)"]
+    SW["Switch<br/>AP trunk port: native VLAN 10 (mgmt),<br/>tagged 13, 15"]
 
     SSID0 --> AP
     SSID1 --> AP
@@ -86,8 +86,10 @@ flowchart LR
 
 AP configuration:
 
-- Trunk port to the AP carries tagged VLANs 10, 13, 15. AP management itself sits on
-  VLAN 10 at `10.0.10.6`, reachable only from the mgmt network.
+- Trunk port to the AP carries VLAN 10 native (untagged) plus tagged VLANs 13 and 15.
+  AP management itself sits on VLAN 10 at `10.0.10.6`, reachable only from the mgmt
+  network. Native-mgmt keeps adoption and factory-reset recovery working without port
+  reconfiguration (see `physical_network.md`).
 - WPS and legacy WPA/TKIP disabled on all SSIDs.
 - Client isolation: ON for `home-iot`, OFF for `home` and `home-mgmt`.
 - mDNS/casting does not cross VLANs; devices that must be castable from phones live on

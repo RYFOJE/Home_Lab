@@ -9,8 +9,12 @@
 key_vault_name                = "rj-london"
 key_vault_resource_group_name = "terraform"
 
-unifi_api_url  = "https://10.1.0.1/" # PLACEHOLDER: confirm controller URL (UDM/CloudKey IP)
-unifi_username = "ryfoje"            # PLACEHOLDER: local controller user created for Terraform
+# UCG Fiber = gateway + UniFi controller at the router mgmt IP (allocations.md).
+# During bootstrap the console still sits on its wizard-default LAN; override with
+# -var 'unifi_api_url=https://192.168.1.1/' for pass 1 if 10.0.10.1 is unreachable.
+# See documentation/networking/physical_network.md for the bootstrap sequence.
+unifi_api_url  = "https://10.0.10.1/"
+unifi_username = "ryfoje" # local controller user created for Terraform (bootstrap step 3)
 
 # -----------------------------------------------------------------------
 # VLANs (documentation/networking/allocations.md)
@@ -20,7 +24,9 @@ networks = {
     name         = "Mgmt"
     vlan         = 10
     subnet       = "10.0.10.0/24"
-    dhcp_enabled = false # PLACEHOLDER: no DHCP pool documented for VLAN 10 (all hosts static); flip true + set start/stop if needed
+    dhcp_enabled = true # device adoption pool only; all infrastructure is static below .200 (allocations.md)
+    dhcp_start   = "10.0.10.200"
+    dhcp_stop    = "10.0.10.249"
   }
   workloads = {
     name         = "Workloads"
@@ -63,7 +69,7 @@ wlan_configs = {
   home = {
     name             = "home"
     network_key      = "trusted"                           # VLAN 13
-    user_group_id    = "PLACEHOLDER_default_user_group_id" # TODO: look up in controller: Settings > Profiles > User Groups > Default
+    user_group_id    = "PLACEHOLDER_default_user_group_id" # FILL IN during bootstrap: default user group ID (Settings > Profiles > User Groups > Default)
     security         = "wpapsk"
     wpa3_support     = true
     wpa3_transition  = true # WPA3-only, no WPA2 fallback
@@ -108,9 +114,11 @@ wlan_configs = {
 # and router mgmt; the controller default handles that chain.
 #
 # NOT MODELED, and why:
-#   FW-017 (wan-dnat-to-yarp)   -- this is a port-forward/DNAT, not a plain
-#                                  firewall rule. Needs a `unifi_port_forward`
-#                                  resource instead. TODO: add it.
+#   FW-017 (wan-dnat-to-yarp)   -- deliberately deferred until the YARP edge
+#                                  goes live. The port-forward capability
+#                                  exists (port_forwards below, modules/
+#                                  firewall unifi_port_forward); populate it
+#                                  then.
 #   FW-021 (deny-vlan1)         -- VLAN 1 is deliberately left unconfigured
 #                                  (no network object exists to reference).
 #                                  Structural/manual only.
@@ -347,5 +355,108 @@ firewall_rules = {
     # Final catch-all: anything a LAN VLAN sends at the router that no rule
     # above allowed is dropped. UniFi's LAN_IN default is accept, so without
     # this rule the whole posture is silently allow-by-default.
+  }
+}
+
+# Empty until the YARP edge goes live. Then add FW-017 (firewall_rules.yaml):
+# tcp 80 and tcp 443 -> 10.1.11.50 (YARP's pinned MetalLB IP).
+port_forwards = {}
+
+# -----------------------------------------------------------------------
+# Switch port profiles and devices
+# (documentation/networking/physical_network.md is the source of truth for
+# the port map, cabling, and the bootstrap/adoption sequence)
+# -----------------------------------------------------------------------
+port_profiles = {
+  # pve host trunks: mgmt untagged (hosts' own traffic + device adoption),
+  # workloads + storage tagged for the VM bridges. VLANs 13/15 deliberately
+  # not carried -- no VMs live on them.
+  trunk_pve = {
+    name                = "trunk-pve"
+    forward             = "customize"
+    native_network_key  = "mgmt"
+    tagged_network_keys = ["workloads", "storage"]
+    poe_mode            = "off"
+  }
+  # AP trunk: mgmt untagged (AP adoption/management), SSID VLANs tagged.
+  trunk_ap = {
+    name                = "trunk-ap"
+    forward             = "customize"
+    native_network_key  = "mgmt"
+    tagged_network_keys = ["trusted", "iot"]
+    poe_mode            = "auto"
+  }
+  access_mgmt = {
+    name               = "access-mgmt"
+    forward            = "native"
+    native_network_key = "mgmt"
+    poe_mode           = "off"
+  }
+  access_trusted = {
+    name               = "access-trusted"
+    forward            = "native"
+    native_network_key = "trusted"
+    poe_mode           = "off"
+  }
+  # Hardening: unused ports carry nothing.
+  disabled = {
+    name    = "disabled"
+    forward = "disabled"
+  }
+}
+
+devices = {
+  # UCG Fiber: gateway + controller. Managed minimally -- its LAN RJ45 ports
+  # are unused (inventory.md); all LAN traffic enters via the SFP+ uplink.
+  gateway = {
+    name = "UCG Fiber"
+    mac  = null # FILL IN after adoption (bootstrap step 7)
+  }
+  # USW Pro Max 16 PoE. Port 17 (SFP+ uplink to the UCG) deliberately has no
+  # override: restricting the uplink risks severing switch management.
+  switch = {
+    name               = "USW Pro Max 16 PoE"
+    mac                = null # FILL IN after adoption (bootstrap step 7)
+    mgmt_network_key   = "mgmt"
+    jumboframe_enabled = true # VLAN 12 Longhorn jumbo frames (MTU 9000, allocations.md)
+    static_ip = {
+      ip      = "10.0.10.2"
+      netmask = "255.255.255.0"
+      gateway = "10.0.10.1"
+      dns1    = "10.0.10.4"
+      dns2    = "10.0.10.5"
+    }
+    ports = {
+      "1"  = "access_mgmt"    # PBS
+      "2"  = "access_mgmt"    # wired admin workstation
+      "3"  = "access_trusted" # wired trusted device
+      "4"  = "disabled"
+      "5"  = "disabled"
+      "6"  = "disabled"
+      "7"  = "disabled"
+      "8"  = "disabled"
+      "9"  = "disabled"
+      "10" = "disabled"
+      "11" = "disabled"
+      "12" = "disabled"
+      "13" = "trunk_pve" # pve1 (2.5GbE -- NIC upgrade headroom)
+      "14" = "trunk_pve" # pve2
+      "15" = "trunk_pve" # pve3
+      "16" = "trunk_ap"  # U7 Lite (PoE)
+      # "17" = SFP+ uplink to UCG Fiber -- intentionally no override
+      "18" = "disabled" # spare SFP+
+    }
+  }
+  ap = {
+    name             = "U7 Lite"
+    mac              = null # FILL IN after adoption (bootstrap step 7)
+    mgmt_network_key = "mgmt"
+    static_ip = {
+      ip      = "10.0.10.6"
+      netmask = "255.255.255.0"
+      gateway = "10.0.10.1"
+      dns1    = "10.0.10.4"
+      dns2    = "10.0.10.5"
+    }
   }
 }

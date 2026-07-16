@@ -36,3 +36,22 @@ resource "unifi_firewall_rule" "this" {
   state_established = each.value.state_established
   state_related     = each.value.state_related
 }
+
+resource "unifi_port_forward" "this" {
+  for_each = var.port_forwards
+
+  name     = each.value.name
+  protocol = each.value.protocol
+  logging  = coalesce(each.value.logging, false)
+
+  wan = {
+    interface  = "wan"
+    ip_address = "any"
+    port       = each.value.wan_port
+  }
+
+  forward = {
+    ip   = each.value.forward_ip
+    port = each.value.forward_port
+  }
+}

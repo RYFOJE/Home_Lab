@@ -95,3 +95,47 @@ variable "firewall_rules" {
   }))
   default = {}
 }
+
+variable "port_forwards" {
+  description = "WAN port forwards (DNAT). See modules/firewall for shape. Key by rule ID from firewall_rules.yaml."
+  type = map(object({
+    name         = string
+    protocol     = string
+    wan_port     = string
+    forward_ip   = string
+    forward_port = string
+    logging      = optional(bool)
+  }))
+  default = {}
+}
+
+variable "port_profiles" {
+  description = "Switch port profiles. See modules/devices for shape. Populate from documentation/networking/physical_network.md."
+  type = map(object({
+    name                = string
+    forward             = string
+    native_network_key  = optional(string)
+    tagged_network_keys = optional(list(string))
+    poe_mode            = optional(string)
+  }))
+  default = {}
+}
+
+variable "devices" {
+  description = "UniFi devices to manage. See modules/devices for shape; mac = null skips the device until adopted."
+  type = map(object({
+    name               = string
+    mac                = optional(string)
+    mgmt_network_key   = optional(string)
+    jumboframe_enabled = optional(bool)
+    static_ip = optional(object({
+      ip      = string
+      netmask = string
+      gateway = string
+      dns1    = optional(string)
+      dns2    = optional(string)
+    }))
+    ports = optional(map(string))
+  }))
+  default = {}
+}

@@ -24,6 +24,7 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 | Router (VLAN 11 sub-if) | Network Device | VLAN 11 | Shared, routes for Project 1 | 10.1.11.1 | Trunk sub-interface gateway for the Workloads VLAN |
 | Router (VLAN 13 sub-if) | Network Device | VLAN 13 | Shared | 10.0.13.1 | Trunk sub-interface gateway for the Trusted Devices VLAN |
 | Router (VLAN 15 sub-if) | Network Device | VLAN 15 | Shared | 10.0.15.1 | Trunk sub-interface gateway for the IoT VLAN |
+| Device adoption DHCP pool | DHCP Pool | VLAN 10 | Shared | 10.0.10.200 - 10.0.10.249 | Temporary addresses for UniFi device adoption; all infrastructure is static below .200 |
 | Trusted device DHCP pool | DHCP Pool | VLAN 13 | Shared | 10.0.13.100 - 10.0.13.199 | Personal laptops/phones/workstations; DHCP-assigned |
 | IoT device DHCP pool | DHCP Pool | VLAN 15 | Shared | 10.0.15.100 - 10.0.15.199 | Smart-home devices on the `home-iot` SSID; DHCP-assigned |
 | Kubernetes API VIP (Talos-native) | Virtual IP | VLAN 11 | Project 1 | 10.1.11.10 | Floats across the 3 combined control-plane/worker nodes; managed by Talos |
@@ -121,3 +122,6 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 - **Firewall rules:** the full rule set required for this network to function - inter-VLAN
   router ACLs plus documented intra-VLAN traffic - lives in `firewall_rules.yaml` next to this
   file, not duplicated here.
+- **Physical layer:** cabling, the switch port map, native-VLAN policy, MTU configuration
+  points, and the device adoption/bootstrap sequence live in `physical_network.md`.
+  Hardware models in `../infrastructure/inventory.md`.

@@ -40,3 +40,16 @@ variable "rules" {
   }))
   default = {}
 }
+
+variable "port_forwards" {
+  description = "WAN port forwards (DNAT). Key by rule ID from firewall_rules.yaml (e.g. \"FW-017\")."
+  type = map(object({
+    name         = string
+    protocol     = string # "tcp" | "udp" | "tcp_udp"
+    wan_port     = string
+    forward_ip   = string
+    forward_port = string
+    logging      = optional(bool)
+  }))
+  default = {}
+}

@@ -53,4 +53,14 @@ module "firewall" {
   address_groups = var.firewall_address_groups
   port_groups    = var.firewall_port_groups
   rules          = var.firewall_rules
+  port_forwards  = var.port_forwards
+}
+
+module "devices" {
+  source = "./modules/devices"
+  # Same key -> id resolution pattern as the wlans wiring; also orders device
+  # config after the VLANs it references.
+  network_ids   = { for k, v in module.vlans.networks : k => v.id }
+  port_profiles = var.port_profiles
+  devices       = var.devices
 }
