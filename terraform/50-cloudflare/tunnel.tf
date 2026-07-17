@@ -21,7 +21,8 @@ locals {
   tunnel_cname = "${cloudflare_zero_trust_tunnel_cloudflared.homelab.id}.cfargotunnel.com"
   # 40-kube-networking names the external Traefik namespace, helm release, and Service all
   # "traefik-<name>", so service == namespace here (:443 = websecure entry).
-  origin_service = "https://${var.traefik_external_namespace}.${var.traefik_external_namespace}.svc.cluster.local:443"
+  traefik_external_namespace = data.terraform_remote_state.kube_networking.outputs.traefik_external_namespace
+  origin_service             = "https://${local.traefik_external_namespace}.${local.traefik_external_namespace}.svc.cluster.local:443"
   origin_request = {
     # SNI pinned to the apex so the wildcard cert's apex SAN validates -- the
     # LE cert is publicly trusted, so full verification stays on.

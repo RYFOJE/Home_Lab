@@ -1,0 +1,24 @@
+# LAN-only admin UI behind traefik-internal (10.1.11.51). TLS with no
+# secretName serves the instance's default wildcard certificate
+# (documentation/programming/publishing_apps.md). The Technitium record
+# grafana.<domain> -> 10.1.11.51 is added out of band.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+spec:
+  ingressClassName: traefik-internal
+  rules:
+    - host: grafana.{{ required "global.domain must be set (injected by the root Application)" .Values.global.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-prometheus-stack-grafana
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - grafana.{{ .Values.global.domain }}

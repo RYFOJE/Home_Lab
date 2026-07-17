@@ -29,6 +29,7 @@ module "traefik_external" {
   instance_name = "external"
   lb_ip         = "10.1.11.50"
   public_domain = data.azurerm_key_vault_secret.public_domain.value
+  chart_version = var.traefik_chart_version
   install_crds  = true
 
   forwarded_headers_trusted_ips = local.cloudflare_ipv4
@@ -42,6 +43,7 @@ module "traefik_internal" {
   instance_name = "internal"
   lb_ip         = "10.1.11.51"
   public_domain = data.azurerm_key_vault_secret.public_domain.value
+  chart_version = var.traefik_chart_version
   install_crds  = false
 
   # After external so the shared CRDs exist before this release's TLSStore.

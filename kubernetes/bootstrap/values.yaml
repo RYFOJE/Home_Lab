@@ -1,0 +1,86 @@
+# App registry for the root app-of-apps (documentation/programming/gitops_apps.md).
+# Adding an app = a new directory under kubernetes/apps/<name>/ plus one entry here.
+#
+# domain, tenantId, vaultUrl and edgeMode are injected by the Terraform-created
+# root Application (terraform/60-argo-cd/gitops.tf) -- never commit real
+# domain/tenant values here (PII rule). repoURL/revision are likewise
+# overridden by the root Application so the tracked branch is configured in one
+# place (terraform.tfvars).
+domain: ""
+tenantId: ""
+vaultUrl: ""
+edgeMode: ""
+repoURL: https://github.com/RYFOJE/Home_Lab.git
+revision: main
+
+# Fields per entry:
+#   name             directory under kubernetes/apps/ and the Application name
+#   namespace        destination namespace
+#   wave             argocd.argoproj.io/sync-wave ordering (lowest first)
+#   needsDomain      forward the domain as helm parameter global.domain
+#   needsTenant      forward the tenant as helm parameter global.tenantId
+#   needsVaultUrl    forward the Key Vault URL as helm parameter vaultUrl
+#   onlyEdgeMode     render the Application only when edgeMode equals this
+#                    value (prune removes it otherwise)
+#   createNamespace  ArgoCD creates the namespace (one owner per namespace)
+#   namespaceLabels  labels applied to that namespace (PSA enforcement)
+#   extraSyncOptions appended to the default syncOptions
+apps:
+  # -- wave -2: secret machinery (operator + policy engine + their CRDs) --
+  - name: external-secrets
+    namespace: external-secrets
+    wave: "-2"
+    createNamespace: true
+  - name: kyverno
+    namespace: kyverno
+    wave: "-2"
+    createNamespace: true
+
+  # -- wave -1: the single store + the isolation policies --
+  - name: cluster-secrets
+    namespace: external-secrets
+    wave: "-1"
+    needsTenant: true
+    needsVaultUrl: true
+
+  # -- wave 0: edge. Only exists in tunnel mode (edge_mode, 10-network);
+  #    the tunnel itself and its token are 50-cloudflare's. --
+  - name: cloudflared
+    namespace: cloudflared
+    wave: "0"
+    onlyEdgeMode: tunnel
+    createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: baseline
+
+  # -- wave 0+: observability. kube-prometheus-stack owns the monitoring
+  #    namespace; node-exporter owns monitoring-system. --
+  - name: kube-prometheus-stack
+    namespace: monitoring
+    wave: "0"
+    needsDomain: true
+    createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: baseline
+    extraSyncOptions:
+      # The kube-prometheus-stack CRDs exceed the client-side
+      # last-applied-configuration annotation size limit.
+      - ServerSideApply=true
+  - name: loki
+    namespace: monitoring
+    wave: "1"
+  - name: tempo
+    namespace: monitoring
+    wave: "1"
+  - name: node-exporter
+    namespace: monitoring-system
+    wave: "1"
+    createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: privileged
+  - name: alloy-gateway
+    namespace: monitoring
+    wave: "2"
+  - name: alloy-logs
+    namespace: monitoring-system
+    wave: "2"

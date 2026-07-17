@@ -15,10 +15,6 @@ terraform {
       # >= 5.7 required: fixes the tunnel-config perpetual-diff bug.
       version = "~> 5.22"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.35"
-    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"

@@ -25,6 +25,11 @@ variable "chart_repository" {
   default     = "https://traefik.github.io/charts"
 }
 
+variable "chart_version" {
+  description = "Traefik helm chart version (pinned by the root layer; identical for every instance)."
+  type        = string
+}
+
 variable "workloads_cidr" {
   description = "VLAN 11 subnet the kube API endpoints live on; egress allow for route/secret watches (allocations.md)."
   type        = string

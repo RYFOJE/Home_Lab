@@ -1,0 +1,26 @@
+tempo:
+  tempo:
+    retention: 168h # 7d
+    storage:
+      trace:
+        backend: local
+    # OTLP intake from alloy-gateway (traces pipeline).
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    size: 25Gi

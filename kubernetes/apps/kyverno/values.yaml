@@ -1,0 +1,3 @@
+# Chart defaults. Policies live in kubernetes/apps/cluster-secrets (the
+# ExternalSecret namespace-prefix rule) -- Kyverno itself is just the engine.
+kyverno: {}

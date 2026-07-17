@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cluster-secrets
+description: Shared secret plumbing -- the single azure-kv ClusterSecretStore and the Kyverno policies that keep namespaces from cross-cutting Key Vault
+type: application
+version: 0.1.0

@@ -141,8 +141,10 @@ An app chooses its exposure by the ingressClass it publishes under. Internal-onl
 unreachable from the internet by topology - no DNAT to `10.1.11.51` exists - not by
 per-route configuration.
 
-Public traffic enters via a Cloudflare Tunnel (`terraform/50-cloudflare`). TLS from the
-client terminates at Cloudflare's edge and is re-encrypted over the tunnel to cloudflared:
+Public traffic enters via a Cloudflare Tunnel (tunnel + token: `terraform/50-cloudflare`;
+connector workload: the GitOps app `kubernetes/apps/cloudflared`, deployed only in tunnel
+mode). TLS from the client terminates at Cloudflare's edge and is re-encrypted over the
+tunnel to cloudflared:
 two in-cluster replicas (one per node) that dial OUT to the Cloudflare edge over QUIC
 (udp 7844, FW-015) and proxy requests to the external Traefik Service with SNI pinned to
 the apex (`originServerName`) and full certificate verification - the router forwards no

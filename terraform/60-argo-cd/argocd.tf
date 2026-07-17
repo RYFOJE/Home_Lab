@@ -1,6 +1,7 @@
-# ArgoCD server only -- no Application/AppProject resources here. GitOps
-# self-management of this repo is a deliberate follow-on step, not part of
-# the install.
+# ArgoCD server install. The GitOps bootstrap floor (root Application, the
+# external-secrets namespace and the ESO credential) lives in gitops.tf;
+# everything under kubernetes/apps -- and every in-cluster secret via ESO --
+# is deployed by ArgoCD from git, not by Terraform.
 
 resource "kubernetes_namespace" "argocd" {
   metadata {
@@ -18,9 +19,12 @@ resource "helm_release" "argocd" {
   values = [yamlencode({
     configs = {
       secret = {
-        # bcrypt so the plaintext Key Vault value never lands in the release
-        # values/state beyond a one-way hash.
-        argocdServerAdminPassword = bcrypt(data.azurerm_key_vault_secret.argocd_admin_password.value)
+        # Key Vault holds the bcrypt hash itself (argocd-admin-password-bcrypt):
+        # hashing with bcrypt() here would generate a new salt every plan and
+        # roll the release on every apply. Note the plaintext-equivalent hash
+        # and every Key Vault data-source value do land in Terraform state --
+        # state is sensitive regardless.
+        argocdServerAdminPassword = data.azurerm_key_vault_secret.argocd_admin_password_bcrypt.value
       }
     }
     server = {
@@ -35,21 +39,30 @@ resource "helm_release" "argocd" {
       }
       replicas = 2
       pdb      = { enabled = true, maxUnavailable = 1 }
+      resources = {
+        requests = { cpu = "50m", memory = "128Mi" }
+        limits   = { memory = "256Mi" }
+      }
     }
     # HA: sharding across 2 controller pods (not active/active -- each shard
-    # owns a subset of managed clusters), 2 repo-server/applicationset pods,
-    # and redis-ha (Sentinel-backed, 3 pods) replacing the single redis pod.
-    # 3 nodes total (30-talos), hardAntiAffinity spreads redis-ha 1/node.
+    # owns a subset of managed clusters), 2 repo-server pods, and redis-ha
+    # (Sentinel-backed, 3 pods) replacing the single redis pod. 3 nodes total
+    # (30-talos), hardAntiAffinity spreads redis-ha 1/node.
     controller = {
       replicas = 2
       pdb      = { enabled = true, maxUnavailable = 1 }
+      resources = {
+        requests = { cpu = "250m", memory = "512Mi" }
+        limits   = { memory = "1Gi" }
+      }
     }
     repoServer = {
       replicas = 2
       pdb      = { enabled = true, maxUnavailable = 1 }
-    }
-    applicationSet = {
-      replicas = 2
+      resources = {
+        requests = { cpu = "100m", memory = "256Mi" }
+        limits   = { memory = "512Mi" }
+      }
     }
     redis = {
       enabled = false
@@ -58,6 +71,12 @@ resource "helm_release" "argocd" {
       enabled          = true
       hardAntiAffinity = true
       haproxy          = { enabled = true }
+      redis = {
+        resources = {
+          requests = { cpu = "50m", memory = "128Mi" }
+          limits   = { memory = "256Mi" }
+        }
+      }
     }
   })]
 }

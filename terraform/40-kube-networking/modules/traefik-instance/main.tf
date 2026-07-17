@@ -24,6 +24,7 @@ resource "helm_release" "this" {
   name       = local.name
   repository = var.chart_repository
   chart      = "traefik"
+  version    = var.chart_version
   namespace  = kubernetes_namespace.this.metadata[0].name
 
   # All instances ship identical CRDs; only the designated one installs them.
@@ -69,6 +70,10 @@ resource "helm_release" "this" {
     }
     ingressRoute = {
       dashboard = { enabled = false }
+    }
+    resources = {
+      requests = { cpu = "100m", memory = "128Mi" }
+      limits   = { memory = "256Mi" }
     }
   })]
 }

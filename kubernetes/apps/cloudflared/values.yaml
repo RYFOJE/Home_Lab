@@ -1,0 +1,26 @@
+# cloudflared: the in-cluster connector for the Cloudflare Tunnel
+# (terraform/50-cloudflare owns the tunnel itself and writes the token to Key
+# Vault as cloudflared--tunnel-token; the ExternalSecret here syncs it in).
+# This app only renders when edge_mode = "tunnel" -- the registry entry's
+# onlyEdgeMode gate, fed from 10-network via the root Application.
+
+image:
+  # Pinned by calendar tag (never latest -- autoupdate is disabled in the pod
+  # args). Renovate proposes bumps.
+  repository: cloudflare/cloudflared
+  tag: "2026.7.2"
+
+# One per node via required anti-affinity; a node drain reschedules onto the
+# third node so the public edge never drops.
+replicas: 2
+
+# Namespace (= Service name) of the external Traefik instance from
+# 40-kube-networking -- the tunnel origin the NetworkPolicy allows egress to.
+traefikExternalNamespace: traefik-external
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

@@ -5,8 +5,11 @@ terraform {
     resource_group_name  = "terraform"
     storage_account_name = "rjterraform"
     container_name       = "london"
-    key                  = "40-Kube-Networking.tfstate"
-    use_azuread_auth     = true
+    # Renamed from "40-Kube-Networking.tfstate" (pre-rename casing). On an
+    # existing deployment run `terraform init -migrate-state` once -- a plain
+    # init -reconfigure would start from empty state and re-create the layer.
+    key              = "40-kube-networking.tfstate"
+    use_azuread_auth = true
   }
 
   required_providers {

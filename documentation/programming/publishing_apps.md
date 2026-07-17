@@ -7,7 +7,7 @@ it publishes under. Nothing else in the route changes.
 
 | ingressClass | Instance | LB IP | Reachable from |
 |---|---|---|---|
-| `traefik-external` | traefik-external | 10.1.11.50 | Internet (WAN DNAT, FW-017) **and** the LAN |
+| `traefik-external` | traefik-external | 10.1.11.50 | Internet (Cloudflare Tunnel; WAN DNAT FW-017 in dnat mode) **and** the LAN |
 | `traefik-internal` | traefik-internal | 10.1.11.51 | LAN only — never port-forwarded |
 
 `traefik-external` is the internet-facing edge; it is also reachable from the
@@ -89,16 +89,19 @@ routes only need the HTTPS side.
 
 ## DNS
 
-Terraform provisions the edge; the hostname records are added out of band (see
-`networking/allocations.md`, Technitium is manual/Ansible):
+Terraform provisions the edge; internal hostname records are added out of band
+(see `networking/allocations.md`, Technitium is manual/Ansible):
 
-- **External app** (`traefik-external`): a public record at Cloudflare
-  (`my-app.<public domain>` → WAN IP) for internet clients, and an internal
-  Technitium record → 10.1.11.50 for LAN clients. The wildcard `*` →
-  10.1.11.50 in the internal zone already covers the LAN side.
+- **External app** (`traefik-external`): in tunnel mode no per-app public
+  record is needed — the Terraform-managed wildcard CNAME → the tunnel
+  (`terraform/50-cloudflare`) already covers every hostname. In dnat mode, a
+  manual public record `my-app.<public domain>` → WAN IP. On the LAN, the
+  internal wildcard `*` → 10.1.11.50 in the Technitium zone covers it.
 - **Internal-only app** (`traefik-internal`): an explicit Technitium record
   `my-app.<public domain>` → 10.1.11.51 (more-specific beats the internal
-  wildcard). No Cloudflare record — the name does not resolve off-LAN.
+  wildcard). Off-LAN the name resolves to the tunnel but the tunnel's origin
+  is `traefik-external`, which carries no route for it — the app stays
+  unreachable from the internet.
 
 Trust-zone model, blast radius, and the reason the split exists are in
 `networking/wifi_and_isolation.md` §4.

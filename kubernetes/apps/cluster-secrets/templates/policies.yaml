@@ -1,0 +1,7 @@
+{{/*
+  Included verbatim via .Files.Get, which does no template processing, so the
+  Kyverno JMESPath variables in files/policies.yaml survive untouched. Helm
+  parses actions even inside YAML comments, so the include must be the only
+  action in this file.
+*/}}
+{{ .Files.Get "files/policies.yaml" }}

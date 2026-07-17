@@ -16,3 +16,13 @@ variable "argocd_chart_version" {
   description = "argo-cd helm chart version, pinned deliberately (never latest -- bump on purpose)."
   type        = string
 }
+
+variable "gitops_repo_url" {
+  description = "Git repository ArgoCD syncs kubernetes/ from (public repo -- no credential)."
+  type        = string
+}
+
+variable "gitops_revision" {
+  description = "Branch or tag ArgoCD tracks for the root app-of-apps and all child apps."
+  type        = string
+}

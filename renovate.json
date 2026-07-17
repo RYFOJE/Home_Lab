@@ -1,0 +1,16 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": "Keeps the deliberately-pinned versions fresh: Terraform providers (terraform manager), umbrella-chart dependencies in kubernetes/apps/*/Chart.yaml (helmv3 manager), container images in helm values (helm-values manager, e.g. the cloudflared image), and the helm chart pins living in *.tfvars via the annotated regex manager below.",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Helm chart pins in *.tfvars annotated `# renovate: helmRepo=<url> chart=<name>`",
+      "managerFilePatterns": ["/\\.tfvars$/"],
+      "matchStrings": [
+        "=\\s*\"(?<currentValue>[^\"]+)\"\\s*#\\s*renovate: helmRepo=(?<registryUrl>\\S+) chart=(?<depName>\\S+)"
+      ],
+      "datasourceTemplate": "helm"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+# In-cluster OTLP entry point for applications
+# (documentation/infrastructure/observability.md):
+#   grpc: http://alloy-gateway.monitoring.svc.cluster.local:4317
+#   http: http://alloy-gateway.monitoring.svc.cluster.local:4318
+alloy:
+  controller:
+    type: deployment
+    replicas: 2
+
+  service:
+    enabled: true
+
+  alloy:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+    extraPorts:
+      - name: otlp-grpc
+        port: 4317
+        targetPort: 4317
+        protocol: TCP
+      - name: otlp-http
+        port: 4318
+        targetPort: 4318
+        protocol: TCP
+
+    configMap:
+      content: |
+        otelcol.receiver.otlp "default" {
+          grpc {
+            endpoint = "0.0.0.0:4317"
+          }
+          http {
+            endpoint = "0.0.0.0:4318"
+          }
+          output {
+            metrics = [otelcol.processor.batch.default.input]
+            logs    = [otelcol.processor.batch.default.input]
+            traces  = [otelcol.processor.batch.default.input]
+          }
+        }
+
+        otelcol.processor.batch "default" {
+          output {
+            metrics = [otelcol.exporter.prometheus.default.input]
+            logs    = [otelcol.exporter.otlphttp.loki.input]
+            traces  = [otelcol.exporter.otlp.tempo.input]
+          }
+        }
+
+        // Metrics: converted to remote_write (Prometheus
+        // enableRemoteWriteReceiver). Future consideration: native Prometheus
+        // OTLP ingestion (/api/v1/otlp) -- see observability.md.
+        otelcol.exporter.prometheus "default" {
+          forward_to = [prometheus.remote_write.default.receiver]
+        }
+
+        prometheus.remote_write "default" {
+          endpoint {
+            url = "http://kube-prometheus-stack-prometheus.monitoring.svc:9090/api/v1/write"
+          }
+        }
+
+        // Logs: Loki native OTLP ingest.
+        otelcol.exporter.otlphttp "loki" {
+          client {
+            endpoint = "http://loki.monitoring.svc:3100/otlp"
+          }
+        }
+
+        // Traces.
+        otelcol.exporter.otlp "tempo" {
+          client {
+            endpoint = "tempo.monitoring.svc:4317"
+            tls {
+              insecure = true
+            }
+          }
+        }

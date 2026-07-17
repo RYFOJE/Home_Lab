@@ -18,6 +18,7 @@ resource "helm_release" "longhorn" {
   name       = "longhorn"
   repository = "https://charts.longhorn.io"
   chart      = "longhorn"
+  version    = var.longhorn_chart_version
   namespace  = kubernetes_namespace.longhorn_system.metadata[0].name
 
   values = [yamlencode({
