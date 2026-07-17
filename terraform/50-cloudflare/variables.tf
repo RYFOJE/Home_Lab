@@ -29,6 +29,6 @@ variable "cloudflared_replicas" {
 }
 
 variable "traefik_external_namespace" {
-  description = "Namespace of the external Traefik instance in 40-Kube-Networking (the tunnel origin). The Service shares this name -- the origin FQDN is built from it in tunnel.tf. Cross-layer coupling: must match 40-Kube-Networking' traefik_external instance_name (\"traefik-<name>\")."
+  description = "Namespace of the external Traefik instance in 40-kube-networking (the tunnel origin). The Service shares this name -- the origin FQDN is built from it in tunnel.tf. Cross-layer coupling: must match 40-kube-networking' traefik_external instance_name (\"traefik-<name>\")."
   type        = string
 }

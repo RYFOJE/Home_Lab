@@ -95,7 +95,7 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 - **Cilium is the cluster network stack:** CNI, NetworkPolicy enforcement, kube-proxy
   replacement, and LoadBalancer IPAM + L2 announcements for the pool above (ARP answered on
   eth0/VLAN 11 only - never on the storage island). `terraform/30-talos` sets
-  `cni: none` / `proxy.disabled`; `terraform/40-Kube-Networking` installs Cilium, so on a fresh
+  `cni: none` / `proxy.disabled`; `terraform/40-kube-networking` installs Cilium, so on a fresh
   rebuild nodes stay NotReady until that layer applies.
 - **VLAN 15 (IoT) keeps untrusted firmware off VLAN 13:** smart-home devices get internet and
   internal DNS (so blocklists apply) and nothing else - unlike trusted devices, they cannot

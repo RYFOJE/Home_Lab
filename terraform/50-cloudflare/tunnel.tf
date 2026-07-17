@@ -19,7 +19,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "homelab" {
 
 locals {
   tunnel_cname = "${cloudflare_zero_trust_tunnel_cloudflared.homelab.id}.cfargotunnel.com"
-  # 40-Kube-Networking names the external Traefik namespace, helm release, and Service all
+  # 40-kube-networking names the external Traefik namespace, helm release, and Service all
   # "traefik-<name>", so service == namespace here (:443 = websecure entry).
   origin_service = "https://${var.traefik_external_namespace}.${var.traefik_external_namespace}.svc.cluster.local:443"
   origin_request = {

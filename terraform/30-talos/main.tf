@@ -87,13 +87,13 @@ locals {
         allowSchedulingOnControlPlanes = true
         # allocations.md: Project 1 virtual ranges (Talos defaults would clash with docs)
         network = {
-          # No Talos-managed CNI: Cilium is installed by 40-Kube-Networking (cilium.tf).
+          # No Talos-managed CNI: Cilium is installed by 40-kube-networking (cilium.tf).
           # On a fresh rebuild nodes stay NotReady until that layer applies.
           cni            = { name = "none" }
           podSubnets     = [var.pod_cidr]
           serviceSubnets = [var.service_cidr]
         }
-        # kube-proxy replaced by Cilium (kubeProxyReplacement, 40-Kube-Networking).
+        # kube-proxy replaced by Cilium (kubeProxyReplacement, 40-kube-networking).
         proxy = { disabled = true }
       }
     })

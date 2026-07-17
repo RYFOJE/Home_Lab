@@ -32,16 +32,16 @@ Layered Terraform under `terraform/`, applied in numeric order. Each layer has i
 |---|---|---|---|
 | `10-network` | ubiquiti-community/unifi | VLANs, WLANs, firewall rules (modules: `vlans`, `wlans`, `firewall`) | — |
 | `20-proxmox` | bpg/proxmox, siderolabs/talos | Talos Image Factory schematic (Longhorn extensions baked in), k8s node VMs, core-infra DNS/NTP LXCs, PVE storage + firewall | — |
-| `30-talos` | siderolabs/talos | Machine config (static IPs, VIP, Longhorn prereqs, CNI `none` + kube-proxy disabled — Cilium comes from 40-Kube-Networking), bootstrap, kubeconfig output | 20-proxmox |
-| `40-Kube-Networking` | kubernetes, helm, alekc/kubectl, azurerm | Cilium (CNI, NetworkPolicy, kube-proxy replacement, LB IPAM + L2 announcements), Multus + whereabouts (vendored manifests in `manifests/`, no helm repo exists upstream), Longhorn, cert-manager (Cloudflare DNS-01 wildcard), Traefik ×2 (external 10.1.11.50 / internal 10.1.11.51) | 30-talos |
+| `30-talos` | siderolabs/talos | Machine config (static IPs, VIP, Longhorn prereqs, CNI `none` + kube-proxy disabled — Cilium comes from 40-kube-networking), bootstrap, kubeconfig output | 20-proxmox |
+| `40-kube-networking` | kubernetes, helm, alekc/kubectl, azurerm | Cilium (CNI, NetworkPolicy, kube-proxy replacement, LB IPAM + L2 announcements), Multus + whereabouts (vendored manifests in `manifests/`, no helm repo exists upstream), Longhorn, cert-manager (Cloudflare DNS-01 wildcard), Traefik ×2 (external 10.1.11.50 / internal 10.1.11.51) | 30-talos |
 | `50-cloudflare` | cloudflare/cloudflare ~> 5, kubernetes, random, azurerm | Cloudflare Tunnel (remote-managed config), apex + wildcard CNAMEs → `<tunnel-id>.cfargotunnel.com` (tunnel mode only), in-cluster cloudflared Deployment (2 replicas, QUIC) | 30-talos |
 
 Ordering caveats:
 - core-infra LXCs (20-proxmox) provide DNS/NTP for the whole network; their software (Technitium + chrony) is configured manually/Ansible **before** applying 30-talos — Talos nodes resolve and sync time against them from first boot, and the firewall blocks public resolvers.
 - `20-proxmox/storage.tf` imports the existing `local` datastore; its `content` list replaces live config — reconcile with `pvesm status` before applying changes there.
 - Talos VMs run without qemu-guest-agent (Talos doesn't ship it); enabling it hangs applies.
-- 40-Kube-Networking installs the CNI: on a fresh rebuild, nodes stay NotReady after 30-talos until 40-Kube-Networking applies Cilium — apply the two layers back-to-back.
-- 50-cloudflare requires 40-Kube-Networking applied first (traefik-external is the tunnel origin) and, in Key Vault, the broadened `cloudflare-dns-api-token` scopes plus the `cloudflare-account-id` secret (see `documentation/secrets.md`). Its plan needs both the cluster and the Cloudflare API reachable.
+- 40-kube-networking installs the CNI: on a fresh rebuild, nodes stay NotReady after 30-talos until 40-kube-networking applies Cilium — apply the two layers back-to-back.
+- 50-cloudflare requires 40-kube-networking applied first (traefik-external is the tunnel origin) and, in Key Vault, the broadened `cloudflare-dns-api-token` scopes plus the `cloudflare-account-id` secret (see `documentation/secrets.md`). Its plan needs both the cluster and the Cloudflare API reachable.
 
 `terraform.tfvars` files are committed on purpose — they hold non-secret configuration only.
 

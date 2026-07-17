@@ -1,6 +1,6 @@
 # Publishing an App Behind Traefik
 
-The cluster runs two Traefik instances (`terraform/40-Kube-Networking`, module
+The cluster runs two Traefik instances (`terraform/40-kube-networking`, module
 `traefik-instance`). An app selects which one carries its traffic — and
 therefore whether it is reachable from the internet — by the **ingressClass**
 it publishes under. Nothing else in the route changes.

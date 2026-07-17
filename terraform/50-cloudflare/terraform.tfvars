@@ -11,6 +11,6 @@ tunnel_name          = "london-homelab-edge"
 cloudflared_image    = "cloudflare/cloudflared:2026.7.2"
 cloudflared_replicas = 3
 
-# Origin: the external Traefik instance from 40-Kube-Networking (must match its
+# Origin: the external Traefik instance from 40-kube-networking (must match its
 # traefik_external instance_name -> namespace "traefik-<name>").
 traefik_external_namespace = "traefik-external"

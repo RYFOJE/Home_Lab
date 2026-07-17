@@ -129,7 +129,7 @@ fast host rebuild.
 
 ## 4. Public Edge: Traefik In-Cluster
 
-Two Traefik instances run as Deployments inside the cluster (`terraform/40-Kube-Networking`), each
+Two Traefik instances run as Deployments inside the cluster (`terraform/40-kube-networking`), each
 exposed via a `LoadBalancer` Service with an IP from the Cilium LB pool:
 
 | Instance | LB IP | ingressClass | Exposure |

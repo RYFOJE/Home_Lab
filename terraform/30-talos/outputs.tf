@@ -1,5 +1,5 @@
 output "kubeconfig" {
-  description = "Kubeconfig for the Talos cluster. Consumed by layer 40-Kube-Networking via terraform_remote_state."
+  description = "Kubeconfig for the Talos cluster. Consumed by layer 40-kube-networking via terraform_remote_state."
   value       = talos_cluster_kubeconfig.this.kubeconfig_raw
   sensitive   = true
 }
@@ -21,6 +21,6 @@ output "node_ips" {
 }
 
 output "node_storage_ips" {
-  description = "Node name -> eth1 storage IP (VLAN 12); 40-Kube-Networking excludes these from the whereabouts range."
+  description = "Node name -> eth1 storage IP (VLAN 12); 40-kube-networking excludes these from the whereabouts range."
   value       = local.storage_ips
 }

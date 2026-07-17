@@ -1,5 +1,5 @@
 # Edge secrets (Cloudflare token, account id, public domain) come from Azure
-# Key Vault -- never committed (README rule). Same pattern as 40-Kube-Networking.
+# Key Vault -- never committed (README rule). Same pattern as 40-kube-networking.
 provider "azurerm" {
   features {}
 }
@@ -9,7 +9,7 @@ data "azurerm_key_vault" "this" {
   resource_group_name = var.key_vault_resource_group_name
 }
 
-# Shared with cert-manager (40-Kube-Networking). Scopes: Zone -> DNS -> Edit,
+# Shared with cert-manager (40-kube-networking). Scopes: Zone -> DNS -> Edit,
 # Zone -> Zone -> Read, Account -> Cloudflare Tunnel -> Edit (secrets.md).
 data "azurerm_key_vault_secret" "cloudflare_dns_api_token" {
   name         = "cloudflare-dns-api-token"
