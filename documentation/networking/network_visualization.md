@@ -20,7 +20,7 @@ flowchart TB
         SWITCH --- PBS
     end
 
-    INET ==>|"WAN - only DNAT:<br/>tcp 80/443 to YARP 10.1.11.50"| ROUTER
+    INET ==>|"WAN - only DNAT:<br/>tcp 80/443 to Traefik 10.1.11.50"| ROUTER
 
     USERS["Trusted Devices - VLAN 13<br/>10.0.13.0/24<br/>DHCP 10.0.13.100-199<br/>(wired + 'home' SSID)"]
     USERS --- SWITCH
@@ -42,11 +42,12 @@ flowchart TB
         N2["k8s-node-2 (VM)<br/>Control-plane + Worker<br/>eth0 10.1.11.12"]
         N3["k8s-node-3 (VM)<br/>Control-plane + Worker<br/>eth0 10.1.11.13"]
         VIP["API VIP - Talos-native<br/>10.1.11.10"]
-        LB["MetalLB Pool<br/>10.1.11.50-249"]
-        YARP["YARP edge proxy (in-cluster)<br/>MetalLB IP 10.1.11.50"]
+        LB["LB Pool (Cilium LB IPAM)<br/>10.1.11.50-249"]
+        TRFE["traefik-external (in-cluster)<br/>LB IP 10.1.11.50"]
+        TRFI["traefik-internal (in-cluster)<br/>LB IP 10.1.11.51 - LAN only"]
     end
 
-    ROUTER ==>|"DNAT tcp 80/443"| YARP
+    ROUTER ==>|"DNAT tcp 80/443"| TRFE
 
     PVE1 -->|hosts| N1
     PVE2 -->|hosts| N2
@@ -78,8 +79,9 @@ Notes:
 
 - The DNS/NTP LXCs have no cable of their own - they reach the switch through their
   Proxmox host's bridge.
-- The sole WAN port-forward is tcp 80/443 DNAT to YARP's pinned MetalLB IP (10.1.11.50);
-  YARP runs inside the cluster. Edge design and blast-radius analysis in
+- The sole WAN port-forward is tcp 80/443 DNAT to the external Traefik instance's pinned
+  LB IP (10.1.11.50); both Traefik instances run inside the cluster, and the internal one
+  (10.1.11.51) is never forwarded. Edge design and blast-radius analysis in
   `wifi_and_isolation.md`.
 - Wi-Fi carries VLANs 10, 13, 15 (one SSID each); VLANs 11/12 are wired-only. SSID mapping
   and AP config in `wifi_and_isolation.md`.

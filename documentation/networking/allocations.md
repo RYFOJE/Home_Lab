@@ -31,8 +31,9 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 | k8s-node-1 (eth0) | VM - Talos Node | VLAN 11 | Project 1 | 10.1.11.11 | Combined control-plane + worker; runs on pve1 |
 | k8s-node-2 (eth0) | VM - Talos Node | VLAN 11 | Project 1 | 10.1.11.12 | Combined control-plane + worker; runs on pve2 |
 | k8s-node-3 (eth0) | VM - Talos Node | VLAN 11 | Project 1 | 10.1.11.13 | Combined control-plane + worker; runs on pve3 |
-| MetalLB Pool | LoadBalancer Pool | VLAN 11 | Project 1 | 10.1.11.50 - 10.1.11.249 | Pool for LoadBalancer-type Services (e.g. ingress-nginx); 200 addresses |
-| YARP edge proxy | LoadBalancer Service | VLAN 11 | Project 1 | 10.1.11.50 | Public reverse proxy running in-cluster; pinned first pool IP; sole WAN DNAT target (80/443). See `wifi_and_isolation.md` |
+| LoadBalancer IP Pool | Cilium LB IPAM | VLAN 11 | Project 1 | 10.1.11.50 - 10.1.11.249 | Pool for LoadBalancer-type Services, announced via Cilium L2 on eth0 only; 200 addresses |
+| traefik-external | LoadBalancer Service | VLAN 11 | Project 1 | 10.1.11.50 | Public ingress running in-cluster; pinned first pool IP; sole WAN DNAT target (80/443). See `wifi_and_isolation.md` |
+| traefik-internal | LoadBalancer Service | VLAN 11 | Project 1 | 10.1.11.51 | LAN-only ingress for internal apps; never port-forwarded. See `wifi_and_isolation.md` |
 | k8s-node-1 (eth1) | VM - Storage NIC | VLAN 12 | Project 1 | 10.1.12.11 | Dedicated Longhorn interface; same VM as k8s-node-1. **No gateway configured** (see design notes) |
 | k8s-node-2 (eth1) | VM - Storage NIC | VLAN 12 | Project 1 | 10.1.12.12 | Dedicated Longhorn interface; same VM as k8s-node-2. **No gateway configured** (see design notes) |
 | k8s-node-3 (eth1) | VM - Storage NIC | VLAN 12 | Project 1 | 10.1.12.13 | Dedicated Longhorn interface; same VM as k8s-node-3. **No gateway configured** (see design notes) |
@@ -43,7 +44,7 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 |---|---|---|---|---|---|---|
 | VLAN 1 | *(unused - default/native VLAN, intentionally left untagged)* | - | - | - | - | Not used for any traffic, to reduce VLAN-hopping exposure |
 | VLAN 10 | Shared Infrastructure Mgmt | Shared (multi-project) | 10.0.10.0/24 | 10.0.10.1 | 254 | Proxmox host mgmt, PBS, router/switch mgmt, corosync |
-| VLAN 11 | Kubernetes / Workloads | Project 1 | 10.1.11.0/24 | 10.1.11.1 (router sub-if) | 254 | Talos node primary interfaces, Talos-native API VIP, MetalLB pool |
+| VLAN 11 | Kubernetes / Workloads | Project 1 | 10.1.11.0/24 | 10.1.11.1 (router sub-if) | 254 | Talos node primary interfaces, Talos-native API VIP, LoadBalancer pool (Cilium) |
 | VLAN 12 | Storage / Longhorn | Project 1 | 10.1.12.0/24 | **none - L2-only, no gateway** | 254 | Dedicated Longhorn replica/engine traffic via Multus storage-network. Isolated L2 island: no router sub-interface, unreachable from other VLANs by construction |
 | VLAN 13 | Trusted Devices | Shared (multi-project) | 10.0.13.0/24 | 10.0.13.1 (router sub-if) | 254 | Personal laptops/phones/workstations. Keeps daily-driver devices off the mgmt VLAN; access limited to published services, kube API, DNS/NTP, and the internet (see `firewall_rules.yaml`) |
 | VLAN 15 | IoT Devices | Shared (multi-project) | 10.0.15.0/24 | 10.0.15.1 (router sub-if) | 254 | Smart-home devices via the `home-iot` SSID. Internet + internal DNS only; no path to published apps, the kube API, or any other VLAN (see `wifi_and_isolation.md`) |
@@ -81,13 +82,21 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 - **Trusted Devices on VLAN 13, not VLAN 10:** personal daily-driver devices (laptops, phones)
   live on their own VLAN rather than the mgmt VLAN, so a compromised or merely-curious personal
   device has no path to Proxmox/PBS/switch mgmt interfaces. VLAN 13 reaches: published apps
-  (MetalLB/ingress pool), the kube API (kubectl), internal DNS/NTP, and the internet -
+  (Traefik/LB pool), the kube API (kubectl), internal DNS/NTP, and the internet -
   nothing else. Administrative work (Proxmox web UI, SSH, Technitium admin UI) happens from
   VLAN 10: a wired admin machine or the `home-mgmt` SSID.
-- **Public edge is YARP running in-cluster:** the router's only WAN port-forward is tcp
-  80/443 to YARP's pinned MetalLB IP (10.1.11.50). Containment of the internet-facing pod is
-  handled at the Kubernetes layer (NetworkPolicy, no ServiceAccount token) rather than a
-  separate DMZ VLAN. Design and blast-radius analysis in `wifi_and_isolation.md`.
+- **Public edge is Traefik running in-cluster, split by exposure:** two instances -
+  `traefik-external` (10.1.11.50, the router's only WAN port-forward, tcp 80/443) and
+  `traefik-internal` (10.1.11.51, LAN-only, never forwarded). Apps choose exposure via
+  ingressClass; internal-only apps are unreachable from the WAN by topology. Containment of
+  the internet-facing pods is handled at the Kubernetes layer (Cilium-enforced
+  NetworkPolicy, RBAC-scoped read-only ServiceAccount) rather than a separate DMZ VLAN.
+  Design and blast-radius analysis in `wifi_and_isolation.md`.
+- **Cilium is the cluster network stack:** CNI, NetworkPolicy enforcement, kube-proxy
+  replacement, and LoadBalancer IPAM + L2 announcements for the pool above (ARP answered on
+  eth0/VLAN 11 only - never on the storage island). `terraform/30-talos` sets
+  `cni: none` / `proxy.disabled`; `terraform/40-Kube-Networking` installs Cilium, so on a fresh
+  rebuild nodes stay NotReady until that layer applies.
 - **VLAN 15 (IoT) keeps untrusted firmware off VLAN 13:** smart-home devices get internet and
   internal DNS (so blocklists apply) and nothing else - unlike trusted devices, they cannot
   reach published apps or the kube API.
@@ -107,7 +116,12 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 
   Root domain is `home.arpa` (RFC 8375) for infra hostnames; anything published via ingress
   uses a real owned domain, since `home.arpa` can't get a publicly-trusted TLS cert.
-  Non-`home.arpa` queries are forwarded upstream to a public resolver.
+  Non-`home.arpa` queries are forwarded upstream to a public resolver - except the public
+  domain itself, which Technitium also hosts as an internal zone (split-horizon): a
+  wildcard record → 10.1.11.50 (traefik-external) plus explicit records → 10.1.11.51 for
+  internal-only hostnames. LAN clients reach published apps directly on VLAN 11 without
+  hairpinning through the WAN; public DNS (Cloudflare) carries explicit records for
+  published apps only, no wildcard.
 - **Backup strategy (PBS + Longhorn split):** PBS backs up VM/CT *system* disks. The k8s VMs'
   Longhorn data disks are **excluded** from PBS backup jobs - Longhorn keeps 3 replicas of every
   volume, so backing up all three VMs whole would store three crash-consistent copies of the

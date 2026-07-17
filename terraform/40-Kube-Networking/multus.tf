@@ -11,6 +11,10 @@ data "kubectl_file_documents" "multus" {
 }
 
 resource "kubectl_manifest" "multus" {
+  # Multus delegates the primary CNI config from /etc/cni/net.d -- Cilium must
+  # have written it first (also: no pods schedule before the CNI is up).
+  depends_on = [helm_release.cilium]
+
   for_each          = data.kubectl_file_documents.multus.manifests
   yaml_body         = each.value
   server_side_apply = true
@@ -27,6 +31,8 @@ data "kubectl_file_documents" "whereabouts" {
 }
 
 resource "kubectl_manifest" "whereabouts" {
+  depends_on = [helm_release.cilium]
+
   for_each          = data.kubectl_file_documents.whereabouts.manifests
   yaml_body         = each.value
   server_side_apply = true

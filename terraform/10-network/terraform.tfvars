@@ -32,7 +32,7 @@ networks = {
     name         = "Workloads"
     vlan         = 11
     subnet       = "10.1.11.0/24"
-    dhcp_enabled = false # k8s nodes, control-plane VIP, MetalLB pool are all statically assigned
+    dhcp_enabled = false # k8s nodes, control-plane VIP, LB pool (Cilium) are all statically assigned
   }
   storage = {
     name         = "Storage"
@@ -114,21 +114,17 @@ wlan_configs = {
 # and router mgmt; the controller default handles that chain.
 #
 # NOT MODELED, and why:
-#   FW-017 (wan-dnat-to-yarp)   -- deliberately deferred until the YARP edge
-#                                  goes live. The port-forward capability
-#                                  exists (port_forwards below, modules/
-#                                  firewall unifi_port_forward); populate it
-#                                  then.
 #   FW-021 (deny-vlan1)         -- VLAN 1 is deliberately left unconfigured
 #                                  (no network object exists to reference).
 #                                  Structural/manual only.
 #
 # REMAINING ASSUMPTIONS (check against a plan before applying):
-#   - FW-004/FW-009 destination is the MetalLB pool 10.1.11.50-10.1.11.249,
-#     which doesn't cleanly express as a CIDR. Approximated here as the whole
-#     10.1.11.0/24 subnet -- looser than the source doc. Tighten once you
-#     confirm how this provider models IP ranges (likely an address-group
-#     listing each IP, or it may not support ranges at all).
+#   - FW-004/FW-009 destination is the LoadBalancer pool (Cilium LB IPAM)
+#     10.1.11.50-10.1.11.249, which doesn't cleanly express as a CIDR.
+#     Approximated here as the whole 10.1.11.0/24 subnet -- looser than the
+#     source doc. Tighten once you confirm how this provider models IP ranges
+#     (likely an address-group listing each IP, or it may not support ranges
+#     at all).
 #   - `rule_index` values 2000-2999 (user LAN_IN range per UniFi convention) --
 #     verify they don't collide with existing manual rules on the controller
 #     before applying.
@@ -200,7 +196,7 @@ firewall_rules = {
     rule_index  = 2004
     protocol    = "tcp"
     src_address = "10.0.10.0/24"
-    dst_address = "10.1.11.0/24" # approximated -- see header note re: MetalLB pool range
+    dst_address = "10.1.11.0/24" # approximated -- see header note re: LB pool range
     dst_port    = "80,443"
   }
   "FW-005" = {
@@ -249,7 +245,7 @@ firewall_rules = {
     rule_index  = 2009
     protocol    = "tcp"
     src_address = "10.0.13.0/24"
-    dst_address = "10.1.11.0/24" # approximated -- see header note re: MetalLB pool range
+    dst_address = "10.1.11.0/24" # approximated -- see header note re: LB pool range
     dst_port    = "80,443"
   }
   "FW-010" = {
@@ -308,6 +304,17 @@ firewall_rules = {
     src_address = "10.1.11.0/24"
     dst_port    = "80,443"
   }
+  "FW-015-quic" = {
+    # Second clause of doc rule FW-015 (one doc ID, two entries -- same
+    # pattern as FW-017-https/http): cloudflared QUIC to the Cloudflare edge.
+    name        = "workloads-to-cloudflared-quic"
+    action      = "accept"
+    ruleset     = "LAN_IN"
+    rule_index  = 2017
+    protocol    = "udp"
+    src_address = "10.1.11.0/24"
+    dst_port    = "7844"
+  }
   "FW-016" = {
     name                  = "workloads-to-longhorn-backup"
     action                = "accept"
@@ -358,9 +365,35 @@ firewall_rules = {
   }
 }
 
-# Empty until the YARP edge goes live. Then add FW-017 (firewall_rules.yaml):
-# tcp 80 and tcp 443 -> 10.1.11.50 (YARP's pinned MetalLB IP).
-port_forwards = {}
+# Public edge mode -- the single source of truth (50-cloudflare reads this via
+# remote state). "tunnel": cloudflared carries WAN traffic and the
+# port_forwards map below is forced to {} in main.tf; "dnat": the FW-017
+# forwards are live. Flip here, then apply 10-network followed by 50-cloudflare.
+edge_mode = "dnat" # flip to "tunnel" at cutover, after 50-cloudflare is verified
+
+# FW-017 (firewall_rules.yaml): the dnat-mode fallback WAN entry -- tcp 80/443
+# DNAT to the external Traefik instance (10.1.11.50, Cilium LB IPAM). 443
+# carries the published apps; 80 exists solely for the HTTP->HTTPS redirect
+# (ACME is DNS-01, no inbound dependency). The internal instance (10.1.11.51)
+# is never forwarded. In tunnel mode no WAN forward exists at all -- the
+# entries stay here as the documented fallback path. The module object takes
+# one port per entry, hence two entries.
+port_forwards = {
+  "FW-017-https" = {
+    name         = "wan-dnat-to-traefik-https"
+    protocol     = "tcp"
+    wan_port     = "443"
+    forward_ip   = "10.1.11.50"
+    forward_port = "443"
+  }
+  "FW-017-http" = {
+    name         = "wan-dnat-to-traefik-http"
+    protocol     = "tcp"
+    wan_port     = "80"
+    forward_ip   = "10.1.11.50"
+    forward_port = "80"
+  }
+}
 
 # -----------------------------------------------------------------------
 # Switch port profiles and devices

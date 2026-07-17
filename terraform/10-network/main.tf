@@ -53,7 +53,9 @@ module "firewall" {
   address_groups = var.firewall_address_groups
   port_groups    = var.firewall_port_groups
   rules          = var.firewall_rules
-  port_forwards  = var.port_forwards
+  # Tunnel mode has zero WAN forwards -- the FW-017 entries only materialise
+  # in dnat mode (firewall_rules.yaml FW-017).
+  port_forwards = var.edge_mode == "dnat" ? var.port_forwards : {}
 }
 
 module "devices" {

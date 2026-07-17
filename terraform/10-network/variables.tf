@@ -96,8 +96,18 @@ variable "firewall_rules" {
   default = {}
 }
 
+variable "edge_mode" {
+  description = "Public edge mode (firewall_rules.yaml FW-017): \"tunnel\" = Cloudflare Tunnel carries WAN traffic and no port-forwards exist; \"dnat\" = legacy WAN tcp 80/443 DNAT to 10.1.11.50. Must match 50-cloudflare's edge_mode."
+  type        = string
+  default     = "tunnel"
+  validation {
+    condition     = contains(["tunnel", "dnat"], var.edge_mode)
+    error_message = "edge_mode must be \"tunnel\" or \"dnat\"."
+  }
+}
+
 variable "port_forwards" {
-  description = "WAN port forwards (DNAT). See modules/firewall for shape. Key by rule ID from firewall_rules.yaml."
+  description = "WAN port forwards (DNAT). See modules/firewall for shape. Key by rule ID from firewall_rules.yaml. Only applied when edge_mode = \"dnat\" (main.tf)."
   type = map(object({
     name         = string
     protocol     = string

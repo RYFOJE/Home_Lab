@@ -1,3 +1,15 @@
+variable "key_vault_name" {
+  description = "Azure Key Vault holding the edge secrets (cloudflare-dns-api-token, public-domain, acme-email)."
+  type        = string
+  default     = "rj-london"
+}
+
+variable "key_vault_resource_group_name" {
+  description = "Resource group of the Key Vault."
+  type        = string
+  default     = "terraform"
+}
+
 variable "storage_network_cidr" {
   description = "VLAN 12 Longhorn storage network (L2-only, no gateway)"
   type        = string

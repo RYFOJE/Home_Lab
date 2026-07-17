@@ -40,8 +40,8 @@ resource "proxmox_virtual_environment_vm" "k8s_node" {
 
   # net0 -> eth0: Workloads VLAN 11.
   # firewall=0 on BOTH NICs per firewall_rules.yaml -- keeps cluster traffic
-  # (6443, CNI, Longhorn, MetalLB ARP) out of the PVE firewall entirely;
-  # in-cluster policy is Kubernetes' job.
+  # (6443, CNI, Longhorn, Cilium L2-announcement ARP) out of the PVE firewall
+  # entirely; in-cluster policy is Kubernetes' job.
   network_device {
     bridge   = var.network_bridge
     vlan_id  = var.workloads_vlan_id

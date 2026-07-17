@@ -2,8 +2,8 @@
 #
 # Scope: only the rules needed for (1) inter-VLAN / internet routing on the router, and
 # (2) the host-level firewall on each Proxmox box (pve1/pve2/pve3 + PBS) and the core-infra
-# LXCs. Kubernetes-internal traffic (Kubernetes, Longhorn, YARP NetworkPolicies, etc.) is out of
-# scope - this file covers the infrastructure layer only.
+# LXCs. Kubernetes-internal traffic (Kubernetes, Longhorn, Traefik NetworkPolicies, etc.) is out
+# of scope - this file covers the infrastructure layer only.
 #
 # Format notes:
 #   - One rule per list entry, one field per line - adding/changing/removing a single rule
@@ -95,8 +95,9 @@ rules:
     protocol: [tcp]
     ports: [80, 443]
     rationale: >
-      Browser access to anything published via MetalLB/ingress (hosted apps, Longhorn UI,
-      dashboards) from the management network.
+      Browser access to anything published via the Traefik ingresses (hosted apps, Longhorn
+      UI, dashboards) from the management network. Covers both instances - the LB pool
+      includes 10.1.11.50 (external) and 10.1.11.51 (internal).
 
   - id: FW-005
     name: admin-to-workloads-icmp
@@ -108,8 +109,8 @@ rules:
     protocol: [icmp]
     ports: [echo-request]
     rationale: >
-      Ping diagnostics against the k8s nodes, control-plane VIP, and MetalLB addresses without
-      opening any real service port.
+      Ping diagnostics against the k8s nodes, control-plane VIP, and LoadBalancer addresses
+      without opening any real service port.
 
   - id: FW-006
     name: admin-to-router-mgmt
@@ -166,8 +167,8 @@ rules:
     protocol: [tcp]
     ports: [80, 443]
     rationale: >
-      Browser access from personal devices to anything published via MetalLB/ingress -
-      this is the whole point of hosting apps.
+      Browser access from personal devices to anything published via the Traefik ingresses -
+      this is the whole point of hosting apps. Covers both instances (10.1.11.50/.51).
 
   - id: FW-010
     name: trusted-to-kube-api
@@ -247,11 +248,17 @@ rules:
     action: allow
     source: VLAN 11 (10.1.11.0/24)
     destination: any
-    protocol: [tcp]
-    ports: [80, 443]
+    protocol: [tcp, udp]
+    ports: [80, 443, 7844]
     rationale: >
-      Container image pulls and OS package updates from inside the Talos node VMs. Also covers
-      YARP's outbound needs (ACME cert issuance/renewal) since YARP runs in-cluster.
+      tcp 80/443: container image pulls and OS package updates from inside the Talos node
+      VMs, plus cert-manager's outbound ACME needs - the Let's Encrypt API and the
+      Cloudflare DNS-01 API are both tcp 443. udp 7844: cloudflared QUIC to the Cloudflare
+      edge - the outbound leg of the public edge (see FW-017). QUIC only, deliberately:
+      cloudflared's http2 fallback (tcp 7844) stays blocked, so a broken QUIC path fails
+      closed instead of silently downgrading. Implemented as two tfvars entries, FW-015
+      (tcp 80,443, index 2015) and FW-015-quic (udp 7844, index 2017) - same one-doc-ID
+      pattern as FW-017. Traefik itself has no internet egress (see wifi_and_isolation.md).
 
   # -----------------------------------------------------------------------
   # VLAN 11 (Workloads) -> PBS: Longhorn backup target
@@ -274,10 +281,10 @@ rules:
       for the inbound connection).
 
   # -----------------------------------------------------------------------
-  # WAN -> public edge (YARP in-cluster)
+  # WAN -> public edge (dnat fallback only; tunnel mode has no WAN entry)
   # -----------------------------------------------------------------------
   - id: FW-017
-    name: wan-dnat-to-yarp
+    name: wan-dnat-to-traefik
     layer: router
     category: required
     action: allow
@@ -286,11 +293,18 @@ rules:
     protocol: [tcp]
     ports: [80, 443]
     rationale: >
-      The ONLY port-forward on the WAN interface: DNAT tcp 80/443 to the YARP proxy's
-      pinned MetalLB IP. 443 carries the published apps; 80 exists solely for ACME HTTP-01
-      challenges and the HTTPS redirect. Nothing else is ever forwarded - no SSH, no kube
-      API, no Proxmox UI. Containment of a compromised YARP pod is handled at the
-      Kubernetes layer (NetworkPolicy, no ServiceAccount token) - see wifi_and_isolation.md.
+      The public edge is a Cloudflare Tunnel (terraform/50-cloudflare): cloudflared pods
+      in-cluster dial OUT to the Cloudflare edge (FW-015, udp 7844) and the router accepts
+      zero inbound connections - in tunnel mode this rule does not exist on the router.
+      The DNAT described here (tcp 80/443 to the external Traefik instance's pinned LB IP,
+      Cilium LB IPAM) is the dnat-mode fallback, materialised only when edge_mode = "dnat"
+      (10-network terraform.tfvars; must match 50-cloudflare's edge_mode). 443 carries the
+      published apps; 80 exists solely for the HTTP->HTTPS redirect - certificate issuance
+      is ACME DNS-01 and needs no inbound path. The internal instance (10.1.11.51) is never
+      forwarded. Nothing else is ever forwarded in either mode - no SSH, no kube API, no
+      Proxmox UI. Containment of a compromised Traefik pod is handled at the Kubernetes
+      layer (Cilium-enforced NetworkPolicy, RBAC-scoped read-only ServiceAccount) - see
+      wifi_and_isolation.md.
 
   # -----------------------------------------------------------------------
   # VLAN 15 (IoT) - untrusted smart-home devices on the home-iot SSID
@@ -372,7 +386,7 @@ rules:
   # k8s VM vNICs: firewall=0 (unchecked) on BOTH NICs of every k8s VM (eth0 VLAN 11,
   # eth1 VLAN 12). The Datacenter-level default-deny only filters a vNIC when its
   # "Firewall" checkbox is set - leaving it unset keeps cluster traffic (node-to-node
-  # 6443, CNI overlay, Longhorn on eth1, MetalLB ARP announcements) out of the PVE
+  # 6443, CNI overlay, Longhorn on eth1, Cilium L2-announcement ARP) out of the PVE
   # firewall entirely. In-cluster policy is Kubernetes' job (NetworkPolicy); the VLAN 11
   # boundary is enforced at the router and at the *other* hosts' firewalls (PVE-FW-008).
   # The LXC-FW-* rules below exist precisely because the core-infra LXC vNICs DO have
@@ -484,8 +498,8 @@ rules:
     rationale: >
       Defense-in-depth: the router already blocks this, but the hosts themselves refusing
       connections from the workload VLAN closes the gap if a router ACL is ever
-      misconfigured. This matters more with YARP in-cluster - the workload VLAN now contains
-      the internet-facing entry point. Sole exception is the Longhorn backup path allowed
+      misconfigured. This matters more with the Traefik edge in-cluster - the workload VLAN
+      now contains the internet-facing entry point. Sole exception is the Longhorn backup path allowed
       by PVE-FW-007 above. (VLAN 12 needs no listing here - with no router sub-interface,
       storage traffic has no L3 path to reach these hosts at all.)
 

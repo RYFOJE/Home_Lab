@@ -12,7 +12,8 @@ resource "kubernetes_namespace" "longhorn_system" {
 }
 
 resource "helm_release" "longhorn" {
-  depends_on = [kubectl_manifest.storage_network]
+  # cilium: on a fresh rebuild nodes are NotReady until the CNI lands.
+  depends_on = [kubectl_manifest.storage_network, helm_release.cilium]
 
   name       = "longhorn"
   repository = "https://charts.longhorn.io"
