@@ -35,6 +35,7 @@ Layered Terraform under `terraform/`, applied in numeric order. Each layer has i
 | `30-talos` | siderolabs/talos | Machine config (static IPs, VIP, Longhorn prereqs, CNI `none` + kube-proxy disabled — Cilium comes from 40-kube-networking), bootstrap, kubeconfig output | 20-proxmox |
 | `40-kube-networking` | kubernetes, helm, alekc/kubectl, azurerm | Cilium (CNI, NetworkPolicy, kube-proxy replacement, LB IPAM + L2 announcements), Multus + whereabouts (vendored manifests in `manifests/`, no helm repo exists upstream), Longhorn, cert-manager (Cloudflare DNS-01 wildcard), Traefik ×2 (external 10.1.11.50 / internal 10.1.11.51) | 30-talos |
 | `50-cloudflare` | cloudflare/cloudflare ~> 5, kubernetes, random, azurerm | Cloudflare Tunnel (remote-managed config), apex + wildcard CNAMEs → `<tunnel-id>.cfargotunnel.com` (tunnel mode only), in-cluster cloudflared Deployment (2 replicas, QUIC) | 30-talos |
+| `60-argo-cd` | kubernetes, helm, azurerm | ArgoCD (GitOps controller + UI) via the argo-helm chart, published behind `traefik-internal` (LAN-only, admin tool) | 30-talos |
 
 Ordering caveats:
 - core-infra LXCs (20-proxmox) provide DNS/NTP for the whole network; their software (Technitium + chrony) is configured manually/Ansible **before** applying 30-talos — Talos nodes resolve and sync time against them from first boot, and the firewall blocks public resolvers.
@@ -42,6 +43,7 @@ Ordering caveats:
 - Talos VMs run without qemu-guest-agent (Talos doesn't ship it); enabling it hangs applies.
 - 40-kube-networking installs the CNI: on a fresh rebuild, nodes stay NotReady after 30-talos until 40-kube-networking applies Cilium — apply the two layers back-to-back.
 - 50-cloudflare requires 40-kube-networking applied first (traefik-external is the tunnel origin) and, in Key Vault, the broadened `cloudflare-dns-api-token` scopes plus the `cloudflare-account-id` secret (see `documentation/secrets.md`). Its plan needs both the cluster and the Cloudflare API reachable.
+- 60-argo-cd requires 40-kube-networking applied first (traefik-internal + the cert-manager wildcard cert must exist for the Ingress to get TLS), and the `argocd-admin-password` secret set in Key Vault before apply.
 
 `terraform.tfvars` files are committed on purpose — they hold non-secret configuration only.
 

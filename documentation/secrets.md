@@ -23,8 +23,9 @@ az keyvault secret set --vault-name rj-london --name <name> --value <value>
 | `proxmox-api-token` | `20-proxmox` | Proxmox VE API token for the bpg/proxmox provider, full form `user@realm!tokenid=<uuid>` |
 | `cloudflare-dns-api-token` | `40-kube-networking`, `50-cloudflare` | Cloudflare API token for cert-manager's ACME DNS-01 solver and the 50-cloudflare layer (tunnel + public DNS records). Scopes: Zone → DNS → Edit and Zone → Zone → Read on the public domain's zone only, plus Account → Cloudflare Tunnel → Edit (the tunnel token data source requires Edit, not Read) |
 | `cloudflare-account-id` | `50-cloudflare` | Cloudflare account ID owning the tunnel and the zone. Treated as a secret alongside the domain (PII rule) |
-| `public-domain` | `40-kube-networking`, `50-cloudflare` | The owned public domain served by the Traefik edge (wildcard certificate, split-horizon DNS). Stored as a secret because domain names are treated as PII in this repo |
+| `public-domain` | `40-kube-networking`, `50-cloudflare`, `60-argo-cd` | The owned public domain served by the Traefik edge (wildcard certificate, split-horizon DNS). Stored as a secret because domain names are treated as PII in this repo |
 | `acme-email` | `40-kube-networking` | Contact email for the Let's Encrypt ACME account (expiry/problem notices) |
+| `argocd-admin-password` | `60-argo-cd` | ArgoCD UI admin password. Bcrypt-hashed in Terraform before being set on the chart (`configs.secret.argocdServerAdminPassword`) -- the plaintext never lands in state beyond the hash |
 
 WLAN passphrase names follow the pattern `wlan-passphrase-<wlan key>` with underscores in
 the `wlan_configs` key replaced by dashes (`10-network/main.tf`); adding an SSID means
