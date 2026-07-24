@@ -1,0 +1,5 @@
+apiVersion: v2
+name: bootstrap
+description: Root app-of-apps -- renders one ArgoCD Application per entry in the values.yaml registry
+type: application
+version: 0.1.0

@@ -1,0 +1,7 @@
+# global.tenantId and vaultUrl are injected by the root Application
+# (60-argo-cd gitops.tf): the tenant from the Azure login, the vault URL from
+# the same Key Vault Terraform reads -- one source of truth, no copy in git.
+global:
+  tenantId: ""
+
+vaultUrl: ""

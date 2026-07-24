@@ -1,0 +1,150 @@
+# global.domain is injected by the root Application (never committed -- PII
+# rule); used only by templates/grafana-ingress.yaml.
+global:
+  domain: ""
+
+kube-prometheus-stack:
+  # Talos control-plane components bind their metrics to localhost; scraping
+  # them requires a 30-talos machine-config change (out of scope -- see
+  # documentation/infrastructure/observability.md). kube-proxy does not exist
+  # at all: Cilium replaces it (40-kube-networking). All four are disabled
+  # together with their default rules so no dead-target alerts fire.
+  kubeProxy:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeProxy: false
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      etcd: false
+
+  # node-exporter needs hostNetwork/hostPID/hostPath and therefore runs as a
+  # standalone app in the privileged monitoring-system namespace
+  # (kubernetes/apps/node-exporter) -- this namespace stays PSA baseline.
+  nodeExporter:
+    enabled: false
+
+  prometheusOperator:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+  kube-state-metrics:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+
+  prometheus:
+    prometheusSpec:
+      retention: 15d
+      retentionSize: 22GB
+      resources:
+        requests:
+          cpu: 200m
+          memory: 1Gi
+        limits:
+          memory: 2Gi
+      # alloy-gateway pushes OTLP-converted app metrics here.
+      enableRemoteWriteReceiver: true
+      # Discover ServiceMonitors/PodMonitors/Rules from any namespace and any
+      # release -- the standalone node-exporter and alloy live outside this one.
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      ruleSelectorNilUsesHelmValues: false
+      probeSelectorNilUsesHelmValues: false
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: longhorn
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 25Gi
+
+  alertmanager:
+    alertmanagerSpec:
+      # ESO-synced Secret (templates/external-secrets.yaml, Key Vault
+      # monitoring--discord-webhook-url); mounted by the operator at
+      # /etc/alertmanager/secrets/alertmanager-discord/ so the webhook URL
+      # never appears in this file.
+      secrets:
+        - alertmanager-discord
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+      storage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: longhorn
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 1Gi
+    config:
+      route:
+        receiver: discord
+        group_by: ["namespace", "alertname"]
+        routes:
+          - receiver: deadletter
+            matchers:
+              - alertname = "Watchdog"
+      receivers:
+        - name: discord
+          discord_configs:
+            - webhook_url_file: /etc/alertmanager/secrets/alertmanager-discord/webhook-url
+        # No-op receiver: Watchdog lands here, and noisy alerts can be routed
+        # here temporarily while troubleshooting.
+        - name: deadletter
+
+  grafana:
+    admin:
+      # ESO-synced Secret (templates/external-secrets.yaml) from Key Vault
+      # monitoring--grafana-admin-password.
+      existingSecret: grafana-admin
+      userKey: admin-user
+      passwordKey: admin-password
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    persistence:
+      enabled: true
+      storageClassName: longhorn
+      size: 5Gi
+    # RWO volume: a rolling update would deadlock on the PVC.
+    deploymentStrategy:
+      type: Recreate
+    # Ingress comes from templates/grafana-ingress.yaml (wildcard-cert pattern,
+    # documentation/programming/publishing_apps.md) -- not the subchart's.
+    ingress:
+      enabled: false
+    sidecar:
+      dashboards:
+        enabled: true
+    additionalDataSources:
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki.monitoring.svc:3100
+      - name: Tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.monitoring.svc:3200

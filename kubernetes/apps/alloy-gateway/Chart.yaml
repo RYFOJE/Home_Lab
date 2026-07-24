@@ -1,0 +1,9 @@
+apiVersion: v2
+name: alloy-gateway
+description: OTLP gateway -- receives app telemetry, routes metrics/logs/traces (umbrella over grafana/alloy)
+type: application
+version: 0.1.0
+dependencies:
+  - name: alloy
+    version: 1.10.1
+    repository: https://grafana.github.io/helm-charts

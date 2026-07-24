@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cloudflared
+description: Cloudflare Tunnel connector -- outbound-only QUIC to the Cloudflare edge, proxies public requests to traefik-external. Plain templates, no upstream chart.
+type: application
+version: 0.1.0

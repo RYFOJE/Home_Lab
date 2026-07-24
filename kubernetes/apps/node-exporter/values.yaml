@@ -1,0 +1,10 @@
+# Runs in monitoring-system (PSA privileged): hostNetwork/hostPID/hostPath.
+# Deployed standalone instead of via the kube-prometheus-stack subchart so the
+# monitoring namespace can stay PSA baseline. Metric names are identical, so
+# the kube-prometheus-stack node dashboards and rules work unchanged.
+prometheus-node-exporter:
+  prometheus:
+    monitor:
+      # ServiceMonitor picked up cross-namespace by Prometheus
+      # (serviceMonitorSelectorNilUsesHelmValues: false).
+      enabled: true

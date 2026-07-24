@@ -1,0 +1,9 @@
+apiVersion: v2
+name: alloy-logs
+description: Log-collection DaemonSet -- tails pod logs on every node into Loki (umbrella over grafana/alloy)
+type: application
+version: 0.1.0
+dependencies:
+  - name: alloy
+    version: 1.10.1
+    repository: https://grafana.github.io/helm-charts

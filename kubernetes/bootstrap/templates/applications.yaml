@@ -1,0 +1,57 @@
+{{- range .Values.apps }}
+{{- if or (not .onlyEdgeMode) (eq .onlyEdgeMode $.Values.edgeMode) }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .name }}
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ .wave | default "0" | quote }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.revision }}
+    path: kubernetes/apps/{{ .name }}
+    {{- if or .needsDomain .needsTenant .needsVaultUrl }}
+    helm:
+      parameters:
+        {{- if .needsDomain }}
+        - name: global.domain
+          value: {{ required "domain must be injected by the root Application" $.Values.domain | quote }}
+        {{- end }}
+        {{- if .needsTenant }}
+        - name: global.tenantId
+          value: {{ required "tenantId must be injected by the root Application" $.Values.tenantId | quote }}
+        {{- end }}
+        {{- if .needsVaultUrl }}
+        - name: vaultUrl
+          value: {{ required "vaultUrl must be injected by the root Application" $.Values.vaultUrl | quote }}
+        {{- end }}
+    {{- end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    {{- if .namespaceLabels }}
+    managedNamespaceMetadata:
+      labels:
+        {{- range $k, $v := .namespaceLabels }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+    {{- end }}
+    syncOptions:
+      - CreateNamespace={{ .createNamespace | default false }}
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      {{- range .extraSyncOptions }}
+      - {{ . }}
+      {{- end }}
+{{- end }}
+{{- end }}

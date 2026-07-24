@@ -1,0 +1,5 @@
+# Chart defaults are correct here (CRDs installed, webhook + cert-controller
+# enabled). The Azure credential it authenticates with is the Terraform-created
+# azure-kv-creds Secret in this namespace (60-argo-cd gitops.tf), referenced by
+# the ClusterSecretStore in kubernetes/apps/cluster-secrets.
+external-secrets: {}

@@ -4,38 +4,42 @@ title Homelab Infrastructure - Deployment Diagram (Level 1: Physical/Network + K
 
 Deployment_Node(home, "Portfolio Home Network", "Physical Location"){
 
-    Deployment_Node(router, "Router", "Network Device"){
+    Deployment_Node(router, "Router", "UCG Fiber"){
         Container(router_c, "Router")
     }
 
-    Deployment_Node(switch, "Switch", "Network Device"){
+    Deployment_Node(switch, "Switch", "Pro Max 16 PoE"){
         Container(switch_c, "Switch")
     }
 
-    Deployment_Node(pve1, "Proxmox Node 1", "Physical Server"){
+    Deployment_Node(ap, "Access Point", "U7 Lite"){
+        Container(ap_c, "Access Point")
+    }
+
+    Deployment_Node(pve1, "Proxmox Node 1", "Dell OptiPlex 5060"){
         Container(pve1_hv, "Proxmox VE", "Hypervisor", "Hosts VMs")
-        Deployment_Node(k8s1, "k8s-node-1", "Debian 12 + k3s VM"){
-            Container(k8s1_c, "k3s Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
+        Deployment_Node(k8s1, "k8s-node-1", "Talos Linux VM"){
+            Container(k8s1_c, "Talos Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
         }
         Deployment_Node(core_infra1, "core-infra-1", "Debian 12 LXC"){
             Container(core_infra1_c, "DNS + NTP (Primary)", "Technitium + chrony", "Primary authoritative DNS for home.arpa; internal NTP source")
         }
     }
 
-    Deployment_Node(pve2, "Proxmox Node 2", "Physical Server"){
+    Deployment_Node(pve2, "Proxmox Node 2", "Dell OptiPlex 5060"){
         Container(pve2_hv, "Proxmox VE", "Hypervisor", "Hosts VMs")
-        Deployment_Node(k8s2, "k8s-node-2", "Debian 12 + k3s VM"){
-            Container(k8s2_c, "k3s Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
+        Deployment_Node(k8s2, "k8s-node-2", "Talos Linux VM"){
+            Container(k8s2_c, "Talos Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
         }
         Deployment_Node(core_infra2, "core-infra-2", "Debian 12 LXC"){
             Container(core_infra2_c, "DNS + NTP (Secondary)", "Technitium + chrony", "Secondary DNS (zone transfer from primary) + independent NTP source")
         }
     }
 
-    Deployment_Node(pve3, "Proxmox Node 3", "Physical Server"){
+    Deployment_Node(pve3, "Proxmox Node 3", "Dell OptiPlex 3070"){
         Container(pve3_hv, "Proxmox VE", "Hypervisor", "Hosts VMs")
-        Deployment_Node(k8s3, "k8s-node-3", "Debian 12 + k3s VM"){
-            Container(k8s3_c, "k3s Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
+        Deployment_Node(k8s3, "k8s-node-3", "Talos Linux VM"){
+            Container(k8s3_c, "Talos Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
         }
     }
 
@@ -45,6 +49,7 @@ Deployment_Node(home, "Portfolio Home Network", "Physical Location"){
 }
 
 Rel(router_c, switch_c, "Uplink", "Ethernet")
+Rel(switch_c, ap_c, "Trunk (VLANs 10,13,15)", "802.1Q")
 Rel(switch_c, pve1_hv, "Connects", "Ethernet")
 Rel(switch_c, pve2_hv, "Connects", "Ethernet")
 Rel(switch_c, pve3_hv, "Connects", "Ethernet")

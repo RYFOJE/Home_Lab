@@ -1,0 +1,9 @@
+apiVersion: v2
+name: tempo
+description: Trace store, monolithic mode on Longhorn (umbrella over the upstream chart)
+type: application
+version: 0.1.0
+dependencies:
+  - name: tempo
+    version: 1.24.4
+    repository: https://grafana.github.io/helm-charts

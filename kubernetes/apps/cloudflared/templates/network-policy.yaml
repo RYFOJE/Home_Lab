@@ -1,0 +1,46 @@
+# Containment (wifi_and_isolation.md §4): default-deny around the connector
+# pods, enforced by Cilium. No ingress at all -- the tunnel is outbound-only.
+# Outbound only to cluster DNS, the Cloudflare edge (never RFC1918), and the
+# external Traefik entry point.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cloudflared-containment
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"] # no ingress blocks = deny all inbound
+  egress:
+    # Cluster DNS (CoreDNS in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Cloudflare edge: QUIC 7844 plus tcp 443 (tunnel API/bootstrap).
+    # Public internet only -- RFC1918 stays unreachable from these pods.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 7844
+          protocol: UDP
+        - port: 443
+          protocol: TCP
+    # Origin: the external Traefik pods. Cilium's kube-proxy replacement
+    # translates the ClusterIP before egress policy is evaluated, so this
+    # must match the pod-side port 8443, not the service port 443.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefikExternalNamespace }}
+      ports:
+        - port: 8443
+          protocol: TCP

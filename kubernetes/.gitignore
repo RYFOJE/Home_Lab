@@ -1,0 +1,6 @@
+# helm dependency build artifacts -- ArgoCD resolves the pinned dependencies
+# at render time, so neither the vendored charts nor Chart.lock are committed.
+apps/*/charts/
+apps/*/Chart.lock
+bootstrap/charts/
+bootstrap/Chart.lock

@@ -1,0 +1,120 @@
+# Namespace/Key Vault isolation, enforced at admission because Azure RBAC
+# cannot express a per-prefix scope on a single vault (it is per-secret or
+# whole-vault). Convention: a Key Vault secret is named
+# "<namespace>--<name>" (double dash -- a single dash would let namespace
+# "monitoring" read "monitoring-system--*"). Secrets consumed directly by
+# Terraform at bootstrap (public-domain, argocd-admin-password, the
+# azure-kv-sp-* credential) are unprefixed and never reached via ESO.
+#
+# Kyverno 1.18: failureAction lives per-rule (the spec-level
+# validationFailureAction was removed).
+#
+# Matches are by bare kind, not group/version-qualified: a version-qualified
+# match (external-secrets.io/v1/...) would silently skip objects submitted via
+# another served apiVersion (e.g. a deprecated v1beta1), bypassing isolation.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: externalsecret-namespace-isolation
+  annotations:
+    policies.kyverno.io/description: >-
+      ExternalSecrets may only read Key Vault keys prefixed with their own
+      namespace, only through the shared azure-kv ClusterSecretStore, and only
+      via explicit data[] entries.
+spec:
+  background: false
+  rules:
+    # 1. Only the shared store, and at least one explicit data[] entry.
+    - name: only-shared-store-and-explicit-data
+      match:
+        any:
+          - resources:
+              kinds:
+                - ExternalSecret
+      validate:
+        failureAction: Enforce
+        message: >-
+          ExternalSecret must reference the azure-kv ClusterSecretStore and
+          list explicit data[] entries.
+        pattern:
+          spec:
+            secretStoreRef:
+              name: azure-kv
+              kind: ClusterSecretStore
+            data:
+              - secretKey: "?*"
+
+    # 2. dataFrom bypasses the per-key prefix check -- forbid it outright.
+    - name: no-datafrom
+      match:
+        any:
+          - resources:
+              kinds:
+                - ExternalSecret
+      validate:
+        failureAction: Enforce
+        message: >-
+          spec.dataFrom is not allowed; use spec.data[] with an explicit
+          remoteRef.key so the namespace prefix can be enforced.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.dataFrom[] || `[]` | length(@) }}"
+                operator: GreaterThan
+                value: 0
+
+    # 3. Every remoteRef.key must start with "<namespace>--".
+    - name: keys-carry-namespace-prefix
+      match:
+        any:
+          - resources:
+              kinds:
+                - ExternalSecret
+      validate:
+        failureAction: Enforce
+        message: >-
+          Every remoteRef.key must start with "{{ request.namespace }}--"
+          (single Key Vault, namespace-prefixed keys).
+        foreach:
+          - list: "request.object.spec.data"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ regex_match('^{{ request.namespace }}--', '{{ element.remoteRef.key }}') }}"
+                    operator: Equals
+                    value: false
+---
+# No second store may exist: a stray ClusterSecretStore could point at the
+# same credential, and a namespaced SecretStore could introduce a new one.
+# Both are the "get them from elsewhere" path the isolation rule closes.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: single-secretstore
+spec:
+  background: false
+  rules:
+    - name: only-azure-kv-clustersecretstore
+      match:
+        any:
+          - resources:
+              kinds:
+                - ClusterSecretStore
+      validate:
+        failureAction: Enforce
+        message: Only the 'azure-kv' ClusterSecretStore is permitted.
+        pattern:
+          metadata:
+            name: azure-kv
+    - name: no-namespaced-secretstore
+      match:
+        any:
+          - resources:
+              kinds:
+                - SecretStore
+      validate:
+        failureAction: Enforce
+        message: >-
+          Namespaced SecretStores are not permitted; use the shared azure-kv
+          ClusterSecretStore.
+        deny: {}
