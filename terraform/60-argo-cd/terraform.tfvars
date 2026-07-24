@@ -7,7 +7,7 @@
 key_vault_name                = "rj-london"
 key_vault_resource_group_name = "terraform"
 
-argocd_chart_version = "7.8.2" # renovate: helmRepo=https://argoproj.github.io/argo-helm chart=argo-cd
+argocd_chart_version = "10.2.1" # renovate: helmRepo=https://argoproj.github.io/argo-helm chart=argo-cd
 
 gitops_repo_url = "https://github.com/RYFOJE/Home_Lab.git"
 gitops_revision = "main"
