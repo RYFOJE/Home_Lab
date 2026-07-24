@@ -19,7 +19,7 @@ terraform {
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.17"
+      version = "~> 3.0"
     }
     kubectl = {
       source  = "alekc/kubectl" # maintained fork of gavinbunney/kubectl
