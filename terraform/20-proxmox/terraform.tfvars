@@ -33,7 +33,11 @@ vm_datastore_id    = "local-lvm"
 
 vm_cores     = 4
 vm_memory_mb = 16384 # 2 GiB reserved as hugepages by 30-talos (Longhorn v2 engine)
-vm_disk_gb   = 100
+
+# Longhorn's data path shares this disk (40-kube-networking defaultDataPath), so
+# every PVC in the cluster lands here: ~81 GiB of monitoring replicas per node,
+# plus 50 GiB of node-pinned PostgreSQL (../../documentation/infrastructure/databases.md).
+vm_disk_gb = 500
 
 local_storage_content = ["backup", "iso", "snippets", "vztmpl"]
 

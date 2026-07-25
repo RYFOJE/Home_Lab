@@ -1,0 +1,124 @@
+# Auto-discovered by kube-prometheus-stack (ruleSelectorNilUsesHelmValues:
+# false) and routed through the existing default Alertmanager route -> discord
+# receiver, same as every other alert in this cluster
+# (documentation/infrastructure/observability.md).
+#
+# These live in the postgres app rather than a split-out -monitoring app the
+# way Kyverno's do: the monitoring.coreos.com CRDs arrive with
+# kube-prometheus-stack at wave 0 and this app is wave 2, so there is no
+# ordering problem to solve.
+#
+# Volume fullness is deliberately absent -- kube-prometheus-stack's default
+# rules already ship KubePersistentVolumeFillingUp, which covers these PVCs.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Values.clusterName }}
+spec:
+  groups:
+    - name: postgres
+      rules:
+        # The failure mode this cluster's own configuration creates. With
+        # synchronous.dataDurability: required and one synchronous standby, a
+        # commit needs a standby to confirm it -- so zero connected streaming
+        # replicas is not degraded replication, it is a full write stall.
+        #
+        # Only the primary reports connected replicas (standbys have none and
+        # nothing cascades off them), so max() across the cluster is the
+        # primary's count. The absent() arm matters for the same reason it does
+        # in the Kyverno rules: if the pods or the namespace disappear the
+        # series vanishes, and a bare comparison would fall silent during
+        # exactly the outage it exists to catch.
+        - alert: PostgresNoStreamingReplica
+          expr: >-
+            max(cnpg_pg_replication_streaming_replicas{namespace="{{ .Release.Namespace }}"}) < 1
+            or absent(cnpg_pg_replication_streaming_replicas{namespace="{{ .Release.Namespace }}"})
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: PostgreSQL primary has no connected streaming replica.
+            description: >-
+              Commits require one synchronous standby to confirm
+              (dataDurability: required), so writes are stalling or about to.
+              Check instance readiness and the CiliumNetworkPolicy before
+              assuming a PostgreSQL fault.
+        # Fewer replicas than the topology expects: still committing, but the
+        # next node loss takes the cluster down. instances - 1 is the healthy
+        # count of replicas connected to the primary.
+        - alert: PostgresReplicaMissing
+          expr: >-
+            max(cnpg_pg_replication_streaming_replicas{namespace="{{ .Release.Namespace }}"}) < {{ sub (int .Values.instances) 1 }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL cluster is running with a missing replica.
+            description: >-
+              Expected {{ sub (int .Values.instances) 1 }} streaming replicas,
+              one per node besides the primary. A replica whose node is gone is
+              recovered by deleting its PVC -- the volumes are node-local and
+              single-replica (infrastructure/databases.md).
+        - alert: PostgresReplicationLagHigh
+          expr: max(cnpg_pg_replication_lag{namespace="{{ .Release.Namespace }}"}) > 30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL replication lag above 30s.
+            description: >-
+              A lagging standby cannot serve as the synchronous confirmer, and a
+              failover to it would lose that window.
+        # kube-state-metrics rather than a cnpg_ metric, on purpose: an instance
+        # whose pod will not start exports no PostgreSQL metrics at all, so the
+        # thing that notices must not come from the instance itself.
+        - alert: PostgresInstanceNotReady
+          expr: >-
+            sum(kube_pod_container_status_ready{namespace="{{ .Release.Namespace }}", container="postgres"}) < {{ .Values.instances }}
+            or absent(kube_pod_container_status_ready{namespace="{{ .Release.Namespace }}", container="postgres"})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Fewer than {{ .Values.instances }} ready PostgreSQL instances.
+            description: >-
+              Required pod anti-affinity means a drained or lost node leaves its
+              instance Pending until the node returns; that is expected during
+              maintenance and not otherwise.
+        # Threshold and max_connections both read .Values.maxConnections, so
+        # raising the limit moves the alert with it.
+        - alert: PostgresConnectionsSaturating
+          expr: >-
+            max(sum by (pod) (cnpg_backends_total{namespace="{{ .Release.Namespace }}"}))
+            > {{ div (mul (int .Values.maxConnections) 80) 100 }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL instance above 80% of max_connections.
+            description: >-
+              max_connections is {{ .Values.maxConnections }} per instance. A
+              connection pooler (CNPG `Pooler`) is the fix, not a higher ceiling
+              -- each backend costs memory against the pod's 2Gi limit.
+        # A transaction open for an hour holds back vacuum cluster-wide, which
+        # is how xid age becomes a problem in the first place.
+        - alert: PostgresLongRunningTransaction
+          expr: max(cnpg_backends_max_tx_duration_seconds{namespace="{{ .Release.Namespace }}"}) > 3600
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL transaction open longer than 1h.
+            description: >-
+              Blocks vacuum from reclaiming rows and advances no frozen xid.
+        - alert: PostgresTransactionIDWraparound
+          expr: max(cnpg_pg_database_xid_age{namespace="{{ .Release.Namespace }}"}) > 300000000
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL transaction ID age above 300M.
+            description: >-
+              Autovacuum is not keeping up with freezing. PostgreSQL shuts down
+              to protect the data at roughly 2.1B; this fires with ample room,
+              but it does not clear itself.

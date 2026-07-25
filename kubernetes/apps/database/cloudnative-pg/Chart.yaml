@@ -1,0 +1,9 @@
+apiVersion: v2
+name: cloudnative-pg
+description: CloudNativePG operator -- the PostgreSQL HA controller and its CRDs (umbrella over the upstream chart). The Cluster resource itself is the sibling postgres app.
+type: application
+version: 0.1.0
+dependencies:
+  - name: cloudnative-pg
+    version: 0.29.0
+    repository: https://cloudnative-pg.github.io/charts

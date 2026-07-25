@@ -13,7 +13,7 @@ kubernetes/
 │   ├── values.yaml       # the app registry
 │   └── templates/applications.yaml
 └── apps/
-    └── <group>/          # security, monitoring, edge -- grouped by function
+    └── <group>/          # security, monitoring, edge, database -- by function
         └── <name>/       # one directory per app
             ├── Chart.yaml    # umbrella: pins the upstream chart as a dependency
             ├── values.yaml   # all configuration, under the dependency's name key
@@ -28,8 +28,8 @@ at render time; no `Chart.lock` is committed. An app with no upstream chart
 (`cloudflared/`) is the same shape minus the dependency — plain `templates/`.
 
 Adding an app: create `kubernetes/apps/<group>/<name>/` (an existing group —
-`security`, `monitoring`, `edge` — or a new one), add one entry to the
-registry in `kubernetes/bootstrap/values.yaml` with both `name` and `group`
+`security`, `monitoring`, `edge`, `database` — or a new one), add one entry to
+the registry in `kubernetes/bootstrap/values.yaml` with both `name` and `group`
 set (the registry template renders `path: kubernetes/apps/{{ .group }}/{{
 .name }}`), push. The registry entry also sets the destination namespace,
 sync wave, which injected parameters the app receives (`needsDomain`,
@@ -242,6 +242,10 @@ app's `managedNamespaceMetadata`, so they exist before the first pod:
 
 - `monitoring` (owned by `kube-prometheus-stack`) — enforce `baseline`. No
   workload here may request host access.
+- `cnpg-system` (owned by `cloudnative-pg`) and `databases` (owned by
+  `postgres`) — enforce `restricted`. The CloudNativePG operator and the
+  PostgreSQL instance pods are compliant as shipped
+  (`infrastructure/databases.md`), so neither needs the weaker level.
 - `monitoring-system` (owned by `node-exporter`) — enforce `privileged`. Node
   agents only (node-exporter, alloy-logs): hostNetwork/hostPID/hostPath. PSA
   enforcement is namespace-wide, hence the split.
@@ -291,15 +295,20 @@ first (wave `-2` External Secrets Operator + Kyverno, wave `-1` the store,
 the Key Vault isolation policies, and general hardening policies), then apps
 from wave `0`.
 
-`external-secrets`, `kyverno` and `kube-prometheus-stack` additionally require
-`ServerSideApply=true`: a client-side apply stores the whole object in the
-`last-applied-configuration` annotation, which the API server caps at 262144
-bytes, and each of these three ships CRDs past it —
+`external-secrets`, `kyverno`, `kube-prometheus-stack` and `cloudnative-pg`
+additionally require `ServerSideApply=true`: a client-side apply stores the
+whole object in the `last-applied-configuration` annotation, which the API
+server caps at 262144 bytes, and each ships CRDs past it —
 `secretstores`/`clustersecretstores` at ~349 KB, `policies`/`clusterpolicies`
-at ~652 KB, and six of the `monitoring.coreos.com` CRDs between ~345 and
-~482 KB. The rule generalises: any app whose rendered CRDs exceed that limit
-needs the option, and the check is `helm template <app> --include-crds` (what
-ArgoCD renders) measuring each document as JSON. Two of the three are wave
+at ~652 KB, six of the `monitoring.coreos.com` CRDs between ~345 and
+~482 KB, and `clusters`/`poolers.postgresql.cnpg.io` at ~272 KB and ~339 KB.
+
+CRDs are the usual way past that cap, not the only one — a ConfigMap carrying
+a vendored dashboard or rule set reaches it just as easily. So the rule is by
+object, not by kind: any app rendering *anything* past the limit needs the
+option, and `scripts/check_cluster_policy.py` measures every rendered object
+rather than only CRDs. The manual check is `helm template <app> --include-crds`
+(what ArgoCD renders) measuring each document as JSON. Two of the four are wave
 `-2`, so getting this wrong stalls the root app before anything syncs.
 
 A wave is not just a preference: the root app applies wave *n* only once wave

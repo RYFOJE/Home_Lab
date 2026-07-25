@@ -125,6 +125,10 @@ cd terraform/30-talos && terraform apply
 Then continue from **step 4** of the full rebuild below. Talos reinstall wipes the OS
 disks, so Longhorn data does not survive — Restore Volume after step 5.
 
+PostgreSQL does not come back with it. Its volumes sit on those same disks and nothing backs
+them up (`databases.md`), so ArgoCD re-creates the cluster empty at wave 2. Dump it first if
+the node VMs are still reachable; there is no restore path afterwards.
+
 ## Full Rebuild
 
 ```mermaid
@@ -173,6 +177,9 @@ Each layer is `cd terraform/<layer> && terraform init && terraform apply`.
   zones from Technitium's own backup.
 - **Step 5** — on state predating the backend key rename, `terraform init -migrate-state`
   once. A plain `-reconfigure` starts from empty state and re-creates the layer.
+- **Step 9** — the PostgreSQL cluster comes back empty. It has no backups (`databases.md`),
+  so nothing in this runbook restores it; the apps that depend on it come up against a fresh
+  database.
 
 ## Single Node Lost
 
@@ -184,9 +191,32 @@ cd terraform/20-proxmox && terraform apply
 cd terraform/30-talos && terraform apply
 ```
 
-Longhorn re-replicates from the surviving two. No data loss. The replacement must reuse the
-failed node's name and IPs — the pod CIDR is a `/22` at `/24` per node, capping the cluster
-at 4, so a node added alongside rather than replacing will not fit for long.
+Longhorn re-replicates from the surviving two. No data loss.
+
+PostgreSQL is the exception to that sentence: its volumes are single-replica and pinned to
+their own node (`databases.md`), so there is nothing for Longhorn to re-replicate. The
+operator promotes a standby — no data loss, one synchronous standby having confirmed every
+commit — and the lost instance is recovered by deleting both its pod and its PVC, so the
+operator re-clones it from the new primary:
+
+```bash
+kubectl cnpg destroy postgres <n> --kubeconfig kubeconfig -n databases
+```
+
+Both, not just the PVC: the `pvc-protection` finalizer holds a PVC in `Terminating` for as
+long as a pod references it, and the pod on a dead node is itself stuck `Terminating`. The
+command above is the `kubectl cnpg` plugin, which deletes the pair; without the plugin it is
+`delete pod --force` followed by `delete pvc`.
+
+The StorageClass sets `reclaimPolicy: Retain`, so the old `PersistentVolume` outlives its
+PVC either way — after a node loss as a released PV over a Longhorn volume whose only replica
+went with the disk, after a deliberate re-clone on a live node still holding that node's
+50 GiB. Nothing reclaims either: delete the PV and the Longhorn volume behind it once the
+replacement instance is streaming.
+
+The replacement node must reuse the failed node's name and IPs — the pod CIDR is a `/22` at
+`/24` per node, capping the cluster at 4, so a node added alongside rather than replacing
+will not fit for long.
 
 ---
 
@@ -213,6 +243,7 @@ Without versioning, [Restore State](#restore-state) has nothing to restore from.
 | Data | Backed up by |
 |---|---|
 | Longhorn volumes | Longhorn backup target → NFSv4 on PBS |
+| PostgreSQL | **nothing** — the cluster is replicated, not backed up (`databases.md`) |
 | VM/CT system disks | PBS jobs (Longhorn data disks excluded — `../networking/allocations.md`) |
 | Technitium zones + blocklists | Technitium config backup |
 | UniFi controller config | Controller auto-backup (System > Backups) |

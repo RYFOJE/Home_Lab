@@ -263,7 +263,10 @@ rules:
     rationale: >
       tcp 80/443: container image pulls and OS package updates from inside the Talos node
       VMs, plus cert-manager's outbound ACME needs - the Let's Encrypt API and the
-      Cloudflare DNS-01 API are both tcp 443. udp 7844: cloudflared QUIC to the Cloudflare
+      Cloudflare DNS-01 API are both tcp 443. Also the Grafana dashboard sidecar, which
+      fetches the CloudNativePG dashboard from grafana.com at startup rather than carrying
+      its JSON in git (../infrastructure/databases.md) - the one workload whose rendered
+      output depends on this rule. udp 7844: cloudflared QUIC to the Cloudflare
       edge - the outbound leg of the public edge (see FW-017). QUIC only, deliberately:
       cloudflared's http2 fallback (tcp 7844) stays blocked, so a broken QUIC path fails
       closed instead of silently downgrading. Implemented as two tfvars entries, FW-015

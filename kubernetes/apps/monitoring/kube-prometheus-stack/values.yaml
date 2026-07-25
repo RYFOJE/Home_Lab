@@ -139,6 +139,16 @@ kube-prometheus-stack:
     sidecar:
       dashboards:
         enabled: true
+        # An app that ships its own dashboard picks the Grafana folder it
+        # lands in via this annotation (kubernetes/apps/database/postgres).
+        # Both halves are required and neither works alone: the sidecar only
+        # reads the annotation when told which one to read, and it expresses
+        # the result as a subdirectory under FOLDER, which Grafana only turns
+        # into a folder with foldersFromFilesStructure. A dashboard without
+        # the annotation stays at the root, where the chart's own are.
+        folderAnnotation: grafana_folder
+        provider:
+          foldersFromFilesStructure: true
     additionalDataSources:
       - name: Loki
         type: loki

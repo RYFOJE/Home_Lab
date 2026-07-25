@@ -1,0 +1,5 @@
+apiVersion: v2
+name: postgres
+description: HA PostgreSQL cluster (CloudNativePG Cluster resource), one instance per node on node-local Longhorn volumes. Plain templates, no upstream chart -- the operator is the sibling cloudnative-pg app.
+type: application
+version: 0.1.0

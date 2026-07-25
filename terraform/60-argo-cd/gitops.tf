@@ -124,6 +124,9 @@ resource "kubectl_manifest" "project_homelab" {
         { group = "rbac.authorization.k8s.io", kind = "ClusterRoleBinding" },
         { group = "admissionregistration.k8s.io", kind = "ValidatingWebhookConfiguration" },
         { group = "admissionregistration.k8s.io", kind = "MutatingWebhookConfiguration" },
+        # The postgres app ships its own node-local class rather than using the
+        # default `longhorn` one (documentation/infrastructure/databases.md).
+        { group = "storage.k8s.io", kind = "StorageClass" },
         # Pairs with the Kyverno rule forbidding a second store: that blocks a
         # store created by any means, this blocks the GitOps path to one.
         { group = "external-secrets.io", kind = "ClusterSecretStore" },

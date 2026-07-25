@@ -1,0 +1,117 @@
+# Default-deny around the database, enforced by Cilium. Nothing outside this
+# namespace may reach 5432 today; a client app is admitted by adding its
+# namespace here, so the set of things that can talk to the database is a diff
+# rather than a default.
+#
+# A CiliumNetworkPolicy rather than the portable networking.k8s.io/v1 kind that
+# cloudflared uses, for one reason: every instance runs an instance manager that
+# watches its own Cluster resource, so the pods need egress to the Kubernetes
+# API to become ready at all -- and a plain NetworkPolicy can only name the API
+# server as an ipBlock. That means copying the control-plane node IPs out of
+# terraform/20-proxmox into this file, where nothing keeps the two in sync and a
+# re-addressed node silently stops the database from going ready. `toEntities:
+# kube-apiserver` is an identity Cilium maintains itself, so there is nothing
+# here to drift. The VIP is not an alternative: Cilium's kube-proxy replacement
+# resolves the kubernetes.default ClusterIP to its backing endpoints before
+# egress policy is evaluated.
+#
+# All three nodes are combined control-plane, so the apiserver addresses are
+# node addresses. Cilium attaches reserved:kube-apiserver to the node identity
+# in that case, which is what makes the entity match here at all -- and also
+# means the rule grants the nodes on 6443, not an apiserver identity distinct
+# from them. It is narrower than an ipBlock of the same addresses, not narrow.
+#
+# cilium.io/v2 CRDs are installed by 40-kube-networking, long before ArgoCD
+# syncs this app.
+#
+# endpointSelector is empty, so this covers every pod the operator creates in
+# the namespace -- instances, and the Jobs it runs for bootstrap and recovery.
+# Empty endpoint selectors in a CiliumNetworkPolicy are scoped to the policy's
+# own namespace; reaching another one means naming it, as the rules below do.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ .Values.clusterName }}-containment
+spec:
+  endpointSelector: {}
+  ingress:
+    # Instance to instance: streaming replication on 5432, which is also how a
+    # joining or re-cloned replica clones the primary -- pg_basebackup speaks
+    # the PostgreSQL protocol, not the instance manager's HTTP API. 8000 is
+    # that API; the operator's access to it is the next rule, and it is left
+    # open peer-to-peer as well so a promotion does not wait on a policy edit.
+    - fromEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+    # The kubelet's liveness/readiness/startup probes, which reach the instance
+    # manager on 8000 from the node rather than from any endpoint the rules
+    # above select. Cilium's --allow-localhost=auto would permit them
+    # implicitly, but only for as long as no ingress rule here names the host
+    # entity: naming it anywhere hands the whole host->pod decision to this
+    # policy. Stating it costs one rule and removes the trap, so the ports the
+    # pod listens on are listed rather than left to a default that a later,
+    # unrelated host rule would silently switch off.
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+            - port: "9187"
+              protocol: TCP
+    # The operator drives each instance through the instance manager on 8000
+    # -- promotion, switchover, status. Losing this rule does not stop
+    # PostgreSQL, it stops failover, which is the entire point of the cluster.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.operatorNamespace }}
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+    # Prometheus scrapes metrics off the same instance-manager port.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.monitoringNamespace }}
+      toPorts:
+        - ports:
+            - port: "9187"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+  egress:
+    # Cluster DNS (CoreDNS in kube-system).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # The other instances -- replication is a two-way relationship and a
+    # standby dials the primary.
+    - toEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+    # The Kubernetes API. Required for an instance to become ready at all, not
+    # only for failover.
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP

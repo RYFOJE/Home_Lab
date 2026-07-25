@@ -1,0 +1,85 @@
+# The PostgreSQL cluster itself. The operator that reconciles it is the
+# sibling cloudnative-pg app at wave 1; this is wave 2, so the CRDs and the
+# controller are healthy before the Cluster resource is applied.
+
+clusterName: postgres
+
+# One instance per Kubernetes node: required pod anti-affinity on
+# kubernetes.io/hostname puts each instance on a distinct node, so this number
+# tracks the node count (3 today -- terraform/20-proxmox `nodes`). Raise it in
+# the same change that adds a node; templates/cluster.yaml fails the render
+# above maxInstances.
+#
+# The cluster cannot actually reach 5 nodes as addressed today: the pod CIDR is
+# a /22, which caps it at 4 (networking/allocations.md). The ceiling is set at
+# 5 anyway so the constraint that binds first is the addressing plan, stated in
+# one place, rather than a second number here that quietly disagrees with it.
+instances: 3
+maxInstances: 5
+
+image:
+  # Explicit, non-latest tag -- kyverno-policies restrict-image-registries.
+  # ghcr.io is allow-listed. The operator pulls this itself, so it is never
+  # rendered into a manifest the CI policy pass can see: this pin is the only
+  # thing keeping it compliant. Renovate proposes bumps (helm-values manager).
+  #
+  # `standard` rather than `minimal`: it carries the extension set most things
+  # expect (pg_stat_statements, PostGIS-adjacent contribs, full locales).
+  # A major-version bump is *not* an in-place upgrade -- see databases.md.
+  repository: ghcr.io/cloudnative-pg/postgresql
+  tag: "18.4-standard-trixie"
+
+storage:
+  # 50Gi per instance, single-replica and pinned to its own node (see
+  # storageClass below), so it is 50Gi off that node's 500Gi disk
+  # (terraform/20-proxmox `vm_disk_gb`), alongside the ~81Gi of Longhorn
+  # replicas the monitoring stack provisions per node. `vm_disk_gb` is the knob
+  # if the data outgrows it.
+  size: 50Gi
+
+  # Dedicated StorageClass, rendered by templates/storageclass.yaml. Not the
+  # default `longhorn` class: CloudNativePG already replicates at the Postgres
+  # layer (one PVC per instance, streaming replication between them), so a
+  # 3-replica Longhorn class underneath would store nine copies of the data and
+  # put a synchronous cross-node fan-out over VLAN 12 under every WAL flush.
+  className: longhorn-postgres
+
+# Synchronous replication: `any 1` means one standby must confirm each commit,
+# so a single node loss is zero-RPO while the cluster still commits with one of
+# the two standbys down. dataDurability `required` refuses to commit rather
+# than silently degrading to async if no standby is available -- correctness
+# over availability, which is the whole reason to run three of these.
+# At instances: 3 that means losing two nodes stalls writes. That is the trade.
+synchronousStandbys: 1
+
+# Per-instance connection ceiling. Read by both the `max_connections` setting
+# and the saturation alert in templates/alerts.yaml, so the threshold cannot
+# drift away from the limit it is watching.
+maxConnections: 200
+
+resources:
+  # Memory request == limit: PostgreSQL sizes its own buffers against the limit
+  # and a burstable pod would be the first thing the kubelet evicts under node
+  # pressure. No CPU limit -- throttling a database is worse than letting it
+  # burst on a 4-core node.
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    memory: 2Gi
+
+# Initial database created at bootstrap. Its owner's password comes from Key
+# Vault via templates/external-secret.yaml; additional databases are separate
+# `Database` resources against this cluster, not entries here.
+bootstrap:
+  database: app
+  owner: app
+
+# Namespaces named by templates/network-policy.yaml. The Kubernetes API server
+# is not among them -- the policy reaches it through Cilium's `kube-apiserver`
+# entity, so no control-plane address is restated here.
+#
+# Namespace of the Prometheus that scrapes the instances' metrics endpoint.
+monitoringNamespace: monitoring
+# Namespace the operator runs in -- it reaches the instance manager on 8000.
+operatorNamespace: cnpg-system

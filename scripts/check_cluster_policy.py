@@ -13,7 +13,7 @@ what kubernetes/apps/security/kyverno-policies enforces at admission time:
     restricted (outside the named privileged exceptions), and every app that
     owns its destination namespace pairs createNamespace with namespaceLabels
     (require-namespace-psa-label)
-  - every rendered CustomResourceDefinition stays under the 262144-byte
+  - every rendered object stays under the 262144-byte
     last-applied-configuration cap, or the owning app sets
     ServerSideApply=true in the bootstrap registry
 
@@ -29,7 +29,7 @@ variable, a broken autogen rewrite, a rule that errors instead of denying.
 
 This still does not replace the live admission webhook. It exists to catch a
 chart bump introducing a new registry, a namespace with a missing or
-`privileged` PSA label, or new CRDs crossing the size cap, before merge rather
+`privileged` PSA label, or an object crossing the size cap, before merge rather
 than at wave -1/-2 on the next sync or on the next pod restart after one.
 
 Not covered, and deliberately so: the Terraform-created namespaces
@@ -93,7 +93,7 @@ API_SERVER_NAMESPACES = {"default", "kube-system", "kube-public", "kube-node-lea
 # ArgoCD-managed label would flap on every apply.
 TERRAFORM_OWNED_NAMESPACES = {"external-secrets"}
 
-CRD_ANNOTATION_CAP = 262_144
+ANNOTATION_CAP = 262_144
 
 # Chart pins in *.tfvars are annotated `# renovate: helmRepo=<url> chart=<name>`
 # (renovate.json's customManagers) -- reuse that as the single source of
@@ -331,18 +331,26 @@ def check_namespaces(docs: list[dict], source: str) -> None:
             )
 
 
-def check_crds(docs: list[dict], source: str, server_side_apply: bool) -> None:
+def check_annotation_cap(docs: list[dict], source: str, server_side_apply: bool) -> None:
+    """Any object applied client-side, not only CRDs.
+
+    The API server stores the whole object in last-applied-configuration and
+    caps that annotation at 262144 bytes regardless of kind. CRDs are the usual
+    way past it, not the only one -- a ConfigMap carrying a vendored dashboard
+    or rule set reaches it too -- so every rendered object is measured.
+    """
     for d in docs:
-        if not isinstance(d, dict) or d.get("kind") != "CustomResourceDefinition":
+        if not isinstance(d, dict) or "kind" not in d:
             continue
         # Compact separators and default=str to match the Go encoder kubectl
         # serializes last-applied-configuration with: no padding, and YAML
         # scalars PyYAML resolved to dates/times rendered back as strings.
         size = len(json.dumps(d, separators=(",", ":"), default=str).encode())
-        if size > CRD_ANNOTATION_CAP and not server_side_apply:
+        if size > ANNOTATION_CAP and not server_side_apply:
+            name = d.get("metadata", {}).get("name", "<unnamed>")
             errors.append(
-                f"[{source}] CRD {d['metadata']['name']} renders to {size}B, over "
-                f"the {CRD_ANNOTATION_CAP}B last-applied-configuration cap, but its "
+                f"[{source}] {d['kind']} {name} renders to {size}B, over "
+                f"the {ANNOTATION_CAP}B last-applied-configuration cap, but its "
                 f"bootstrap registry entry has no ServerSideApply=true"
             )
 
@@ -431,7 +439,7 @@ def render_gitops_apps() -> None:
         # the images ArgoCD really does apply from that chart.
         check_images(docs, app["name"])
         check_namespaces(docs, app["name"])
-        check_crds(docs, app["name"], ssa)
+        check_annotation_cap(docs, app["name"], ssa)
 
 
 def render_terraform_charts() -> None:
@@ -471,7 +479,7 @@ def render_terraform_charts() -> None:
             # Terraform applies these via helm_release (server-side by
             # default in the helm provider), not client kubectl apply, so
             # the annotation-size cap that gates GitOps apps doesn't apply.
-            check_crds(docs, source, server_side_apply=True)
+            check_annotation_cap(docs, source, server_side_apply=True)
 
 
 def check_extra_args_mirror() -> None:
@@ -539,7 +547,7 @@ def main() -> None:
             print(f"  - {e}")
         sys.exit(1)
 
-    print("OK -- all rendered images, namespaces and CRDs are within policy.")
+    print("OK -- all rendered images, namespaces and objects are within policy.")
 
 
 if __name__ == "__main__":

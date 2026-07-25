@@ -1,0 +1,105 @@
+{{- if gt (int .Values.instances) (int .Values.maxInstances) }}
+{{- fail (printf "postgres: instances=%v exceeds maxInstances=%v -- one instance per node, and the ceiling is deliberate (values.yaml)" .Values.instances .Values.maxInstances) }}
+{{- end }}
+{{- if lt (int .Values.instances) 3 }}
+{{- fail (printf "postgres: instances=%v cannot sustain a synchronous standby and still tolerate a node loss -- three is the floor for this topology (values.yaml)" .Values.instances) }}
+{{- end }}
+# HA PostgreSQL. One instance per node, each on its own node-local volume,
+# with one synchronous standby. Backups are NOT configured -- see databases.md.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.clusterName }}
+spec:
+  instances: {{ .Values.instances }}
+  imageName: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+
+  # Roll standbys first, then hand the primary role to an already-updated
+  # standby rather than restarting it in place: a switchover costs one
+  # connection reset, an in-place restart costs the recovery time of the
+  # largest instance.
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+
+  # PodDisruptionBudget, so a node drain cannot take the quorum with it.
+  enablePDB: true
+
+  # One instance per node. `required` rather than `preferred`: two instances
+  # sharing a node is not a degraded version of this topology, it is a node
+  # whose failure takes two thirds of the cluster -- and with strict-local
+  # volumes they would be competing for the same disk as well. The cost is that
+  # a drained node leaves its instance Pending until the node returns, which is
+  # the correct outcome.
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+
+  # Defaults to false, and while false the operator ignores superuserSecret
+  # entirely and blanks the `postgres` password to NULL -- the vault secret and
+  # its ExternalSecret would sync correctly and change nothing in PostgreSQL.
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: {{ .Values.clusterName }}-superuser
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.bootstrap.database | quote }}
+      owner: {{ .Values.bootstrap.owner | quote }}
+      secret:
+        name: {{ .Values.clusterName }}-app
+      encoding: UTF8
+
+  # `bootstrap.initdb.secret` only sets the owner's password at initdb time, so
+  # on its own a rotated vault value would sync into the Secret and change
+  # nothing in PostgreSQL. Declaring the role here makes the operator reconcile
+  # it continuously, which is what turns rotation into a vault edit.
+  managed:
+    roles:
+      - name: {{ .Values.bootstrap.owner | quote }}
+        ensure: present
+        login: true
+        passwordSecret:
+          name: {{ .Values.clusterName }}-app
+
+  postgresql:
+    synchronous:
+      # `any N` = N of the standbys must confirm, no ordered preference --
+      # any surviving standby satisfies the commit, which is what makes this
+      # tolerate the loss of a specific node rather than a specific instance.
+      method: any
+      number: {{ .Values.synchronousStandbys }}
+      # Refuse the commit rather than silently falling back to asynchronous
+      # when no standby can confirm. The alternative (`preferred`) turns a
+      # visible outage into invisible data loss.
+      dataDurability: required
+    parameters:
+      # WAL compression: the instances share their node's disk with the volume
+      # itself, and WAL is the part that grows without being asked to.
+      wal_compression: "on"
+      max_connections: {{ .Values.maxConnections | quote }}
+      # Sized against the 2Gi memory limit, not the node's 16Gi.
+      shared_buffers: 512MB
+      effective_cache_size: 1536MB
+      maintenance_work_mem: 128MB
+      work_mem: 8MB
+      # Local NVMe-backed volume, no seek penalty to model.
+      random_page_cost: "1.1"
+
+  storage:
+    storageClass: {{ .Values.storage.className }}
+    size: {{ .Values.storage.size }}
+    resizeInUseVolumes: true
+
+  resources:
+    requests:
+      cpu: {{ .Values.resources.requests.cpu }}
+      memory: {{ .Values.resources.requests.memory }}
+    limits:
+      memory: {{ .Values.resources.limits.memory }}
+
+  monitoring:
+    # Scraped by kube-prometheus-stack, which discovers PodMonitors in every
+    # namespace (podMonitorSelectorNilUsesHelmValues: false). The CRD arrives
+    # at wave 0; this app is wave 2.
+    enablePodMonitor: true

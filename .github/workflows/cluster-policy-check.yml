@@ -4,12 +4,12 @@ name: cluster-policy-check
 # what kubernetes/apps/security/kyverno-policies enforces at admission time.
 # Runs on the surface Renovate itself opens PRs against, so a chart bump
 # introducing a disallowed registry, a namespace with a missing or `privileged`
-# PSA label, or a CRD past the annotation-size cap fails here, not on the next
-# pod restart after merge -- and not by stalling a live wave -1/-2 sync.
+# PSA label, or an object past the annotation-size cap fails here, not on the
+# next pod restart after merge -- and not by stalling a live wave -1/-2 sync.
 #
 # Two passes over the same rendered output:
-#   1. scripts/check_cluster_policy.py, which owns the CRD annotation-size cap
-#      and the registry's createNamespace/namespaceLabels pairing -- neither of
+#   1. scripts/check_cluster_policy.py, which owns the annotation-size cap and
+#      the registry's createNamespace/namespaceLabels pairing -- neither of
 #      which Kyverno can see, since one is about how ArgoCD applies a manifest
 #      and the other about a manifest that does not exist yet.
 #   2. the Kyverno CLI running the real policy file over the manifests the

@@ -1,0 +1,55 @@
+# CloudNativePG: the operator only -- CRDs, controller, admission webhooks.
+# The PostgreSQL Cluster it reconciles is kubernetes/apps/database/postgres at
+# wave 2, so this controller is synced and healthy before the first Cluster
+# resource is applied.
+#
+# Wave 1 rather than 0: monitoring.podMonitorEnabled renders a
+# monitoring.coreos.com kind, whose CRD arrives with kube-prometheus-stack at
+# wave 0. Ordering *within* a wave is not guaranteed, so a PodMonitor at wave 0
+# would race its own CRD on a fresh cluster (gitops_apps.md, "Sync policy").
+#
+# Against the cluster's Kyverno rules:
+#   - the only image is ghcr.io/cloudnative-pg/cloudnative-pg:<appVersion> --
+#     an allow-listed registry with an explicit, non-latest tag;
+#   - the operator pod is restricted-PSA clean as shipped (runAsNonRoot,
+#     seccompProfile RuntimeDefault, capabilities drop ALL, no privilege
+#     escalation, read-only root filesystem), hence enforce: restricted on the
+#     namespace rather than baseline;
+#   - its ClusterRoleBinding targets the chart's own ClusterRole, not
+#     cluster-admin;
+#   - clusters.postgresql.cnpg.io (~272 KB) and poolers.postgresql.cnpg.io
+#     (~339 KB) are both past the 262144-byte last-applied-configuration cap,
+#     so the registry entry carries ServerSideApply=true. Re-measure with
+#     `helm template cloudnative-pg --include-crds` on a chart bump.
+
+cloudnative-pg:
+  # Two replicas behind leader election. The validating/mutating webhooks are
+  # in the admission path for every Cluster/Backup write, so a single-replica
+  # rollout makes those writes fail for the length of the restart -- the same
+  # reasoning as kyverno's admission controller count.
+  replicaCount: 2
+
+  # The chart ships `resources: {}`, which workload-best-practices flags. These
+  # values are this repo's, so they get set rather than audited. No CPU limit:
+  # the controller is bursty at reconcile time and a limit only buys throttling.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  # Both replicas on one node is that node's failure taking the whole admission
+  # path with it, which is what the second replica exists to prevent.
+  # ScheduleAnyway, not DoNotSchedule: an operator that cannot schedule at all
+  # is a worse outcome than one briefly co-located.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: cloudnative-pg
+
+  monitoring:
+    podMonitorEnabled: true

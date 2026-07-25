@@ -1,0 +1,35 @@
+# A pointer, not the dashboard: kube-prometheus-stack's Grafana sidecar
+# (grafana-sc-dashboard, NAMESPACE=ALL) watches every namespace for
+# grafana_dashboard-labelled ConfigMaps, and its k8s-sidecar image resolves a
+# data key ending in ".url" by GETing the value and writing the response body
+# to disk under the stripped filename (kiwigrid/k8s-sidecar
+# src/resources.py:_get_file_data_and_name) -- so this ConfigMap carries a URL,
+# not CloudNativePG's ~250 KB dashboard JSON. That keeps the dashboard owned by
+# the app it describes, the way templates/alerts.yaml already is, without
+# vendoring the JSON into this repo or tripping the annotation-size cap the
+# vendored copy needed ServerSideApply=true for.
+#
+# https://grafana.com/grafana/dashboards/20417-cloudnativepg/ -- official
+# CloudNativePG dashboard, same content as the project's GitHub releases
+# (github.com/cloudnative-pg/grafana-dashboards). `revisions/latest` rather
+# than a pinned number (confirmed byte-identical to the current newest,
+# revision 4, as of this change): the sidecar re-fetches on Grafana pod
+# restart and on any change to this ConfigMap, so a pinned number would need a
+# manual bump to ever move -- `latest` means a restart alone picks up a new
+# publish. There is still no ongoing polling: between restarts, this URL is
+# read once, at the k8s-sidecar's initial list-and-sync on startup.
+#
+# The dashboard ships its own `DS_PROMETHEUS` template variable
+# (type: datasource, default uid: prometheus) -- kube-prometheus-stack's own
+# Prometheus datasource uid, so panels resolve without the chart's downloader
+# needing to rewrite them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.clusterName }}-grafana-dashboard
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Databases
+data:
+  cloudnative-pg.json.url: https://grafana.com/api/dashboards/20417/revisions/latest/download

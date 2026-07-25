@@ -68,6 +68,29 @@ outage it exists to catch. `KyvernoHighPolicyDenyRate` filters
 `workload-best-practices`' two `Audit` rules fail for every third-party
 container running without a probe or without resource requests on each cycle.
 
+`kubernetes/apps/database/postgres/templates/alerts.yaml` adds seven PostgreSQL
+rules on the same route. The same app also renders CloudNativePG's official
+dashboard, as a URL stub that kube-prometheus-stack's Grafana sidecar resolves
+at runtime rather than a vendored JSON ConfigMap (`databases.md`).
+
+Any app may ship a dashboard the same way: a `grafana_dashboard`-labelled
+ConfigMap in its own namespace, picking its Grafana folder with a
+`grafana_folder` annotation. That annotation is honoured because
+kube-prometheus-stack sets both `sidecar.dashboards.folderAnnotation` and
+`provider.foldersFromFilesStructure` — one without the other silently drops
+every dashboard at the root.
+
+`PostgresNoStreamingReplica` is the one specific to how that cluster is
+configured: `synchronous.dataDurability: required` means a commit needs a
+standby to confirm it, so zero connected streaming replicas is a write stall
+rather than degraded replication. `PostgresInstanceNotReady` deliberately reads
+kube-state-metrics instead of a `cnpg_` metric — an instance whose pod will not
+start exports no PostgreSQL metrics at all, so the thing that notices cannot
+come from the instance. Both carry the same `absent()` guard as the Kyverno
+rules above, for the same reason. Volume fullness is left to
+kube-prometheus-stack's default `KubePersistentVolumeFillingUp`
+(`databases.md`).
+
 ## Talos scrape disables
 
 Disabled in kube-prometheus-stack, together with their default rules:

@@ -1,0 +1,36 @@
+# Node-local, single-replica Longhorn class for PostgreSQL data volumes.
+#
+# CloudNativePG is the replication layer here: every instance has its own PVC
+# and its own full copy of the database, kept current by streaming replication.
+# Longhorn replicating each of those PVCs three more times would store the data
+# nine times and, worse, put a synchronous replica write across VLAN 12 in front
+# of every WAL flush -- a fsync that PostgreSQL already waits on. The result is
+# a database that is slower than one node and no more durable than the Postgres
+# layer already made it.
+#
+# strict-local therefore keeps the one replica on the instance's own node, and
+# WaitForFirstConsumer defers volume creation until the scheduler has picked
+# that node. The consequence is deliberate: a volume cannot follow its pod to
+# another node. When a node dies, CloudNativePG promotes a standby and the dead
+# instance is recovered by deleting its PVC and letting the operator re-clone it
+# from the primary -- that is the operator's designed failure path, not a
+# workaround for this class.
+#
+# Retain, so deleting the app or a PVC leaves the PV and its data behind. This
+# StorageClass ships with the app that consumes it; no other workload uses it.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storage.className }}
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  numberOfReplicas: "1"
+  dataLocality: strict-local
+  # Single replica: there is no second copy to rebuild from, so the rebuild
+  # window that this timeout governs does not apply. Left at the Longhorn
+  # default rather than tuned to a number that reads as meaningful.
+  staleReplicaTimeout: "30"
+  fsType: ext4

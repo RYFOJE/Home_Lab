@@ -114,6 +114,30 @@ apps:
     namespace: monitoring-system
     wave: "2"
 
+  # -- wave 1-2: database. The operator (CRDs, controller, admission webhooks)
+  #    must be synced and healthy before the Cluster resource that needs it.
+  #    Wave 1, not 0: podMonitorEnabled renders a monitoring.coreos.com kind
+  #    and ordering within a wave is not guaranteed, so at wave 0 it would race
+  #    kube-prometheus-stack's CRDs on a fresh cluster.
+  - name: cloudnative-pg
+    group: database
+    namespace: cnpg-system
+    wave: "1"
+    createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: restricted
+    extraSyncOptions:
+      # clusters (~272 KB) and poolers (~339 KB) exceed the client-side
+      # last-applied-configuration annotation limit.
+      - ServerSideApply=true
+  - name: postgres
+    group: database
+    namespace: databases
+    wave: "2"
+    createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: restricted
+
   # Kyverno's ServiceMonitor + PrometheusRule, split out of the wave -2
   # kyverno app: they are monitoring.coreos.com kinds, whose CRDs arrive with
   # kube-prometheus-stack at wave 0. Rendered at wave -2 they fail to apply on
