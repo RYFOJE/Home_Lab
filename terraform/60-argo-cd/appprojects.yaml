@@ -1,0 +1,76 @@
+# AppProject rules for the apps in the kubernetes/bootstrap registry.
+#
+# Read by two consumers, which is the point of the file existing:
+#   terraform/60-argo-cd/gitops.tf   -- yamldecode, into the AppProject objects
+#   scripts/check_cluster_policy.py  -- to reject a PR whose rendered manifests
+#                                       these rules would refuse at sync time
+# One file with two readers rather than a copy in each: a copy is a thing that
+# drifts, and a drifted copy turns the CI check green while the cluster rejects
+# the apply.
+#
+# Only the static half lives here. sourceRepos comes from var.gitops_repo_url,
+# and the bootstrap project stays in gitops.tf because its one destination is a
+# Terraform reference (the argocd namespace resource), not a literal.
+#
+# Namespaces stay wildcarded on purpose. Enumerating the current ones would mean
+# a Terraform apply every time an app lands in a new namespace, which breaks the
+# "adding an app = one directory + one registry entry" property this repo is
+# built around (documentation/programming/gitops_apps.md). The real blast radius
+# is cluster-scoped kinds, and that list is closed.
+
+# The kinds every registry app may create cluster-wide. Derived by rendering
+# each app with `helm template --include-crds` and reading off the kinds whose
+# objects have no namespace; re-derive the same way on a chart bump.
+# Deliberately no counts recorded -- they would be wrong after the first bump,
+# and the list is the thing that has to be right.
+sharedClusterResources:
+  # ArgoCD manages the Namespace object itself wherever a registry entry sets
+  # createNamespace + namespaceLabels; omitting this breaks every one of them.
+  - {group: "", kind: Namespace}
+  - {group: apiextensions.k8s.io, kind: CustomResourceDefinition}
+  - {group: rbac.authorization.k8s.io, kind: ClusterRole}
+  - {group: rbac.authorization.k8s.io, kind: ClusterRoleBinding}
+  - {group: admissionregistration.k8s.io, kind: ValidatingWebhookConfiguration}
+  - {group: admissionregistration.k8s.io, kind: MutatingWebhookConfiguration}
+  # The postgres app ships its own node-local class rather than using the
+  # default `longhorn` one (documentation/infrastructure/databases.md).
+  # Pairs with the Kyverno rule forbidding a second store: that blocks a store
+  # created by any means, this blocks the GitOps path to one.
+  - {group: external-secrets.io, kind: ClusterSecretStore}
+  - {group: kyverno.io, kind: ClusterPolicy}
+  - {group: policies.kyverno.io, kind: ValidatingPolicy}
+
+projects:
+  homelab:
+    description: Every app in the kubernetes/bootstrap registry.
+    # The three API-server namespaces are denied outright -- Kyverno's default
+    # resourceFilters already skip them, so a write there would land unpoliced.
+    destinations:
+      - {server: "https://kubernetes.default.svc", namespace: "*"}
+      - {server: "https://kubernetes.default.svc", namespace: "!kube-system"}
+      - {server: "https://kubernetes.default.svc", namespace: "!kube-public"}
+      - {server: "https://kubernetes.default.svc", namespace: "!kube-node-lease"}
+    extraClusterResources: []
+
+  # For the apps whose upstream chart writes into kube-system and offers no
+  # value to stop it: kube-prometheus-stack (the coredns scrape-target Service)
+  # and keda (keda-operator-auth-reader, the RoleBinding letting the metrics
+  # apiserver read extension-apiserver-authentication for delegated auth).
+  #
+  # A separate project rather than dropping !kube-system from homelab: ArgoCD
+  # destinations match on namespace only, never on kind, so the exception cannot
+  # be narrowed to those two objects. Confining it to the apps that need it at
+  # least keeps kube-system closed to the rest of the registry.
+  homelab-kube-system:
+    description: Registry apps whose chart also writes into kube-system.
+    destinations:
+      - {server: "https://kubernetes.default.svc", namespace: "*"}
+      - {server: "https://kubernetes.default.svc", namespace: "!kube-public"}
+      - {server: "https://kubernetes.default.svc", namespace: "!kube-node-lease"}
+    # keda registers v1beta1.external.metrics.k8s.io -- the aggregated API the
+    # HPA controller reads external metrics through, and the reason keda scales
+    # anything at all. Not in sharedClusterResources: an APIService can take
+    # over an API group cluster-wide, so it stays off the project the other
+    # apps share.
+    extraClusterResources:
+      - {group: apiregistration.k8s.io, kind: APIService}

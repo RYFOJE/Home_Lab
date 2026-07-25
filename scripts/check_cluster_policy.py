@@ -38,6 +38,7 @@ Not covered, and deliberately so: the Terraform-created namespaces
 Run locally: python scripts/check_cluster_policy.py
 """
 import atexit
+import fnmatch
 import json
 import os
 import re
@@ -122,15 +123,26 @@ EXTRA_HELM_ARGS = {
 }
 
 # Cluster-scoped kinds rendered anywhere in this repo, so dump() knows which
-# resources must *not* be stamped with a namespace. A few not currently
-# rendered are listed against the day they are. Getting one wrong is cheap in
-# both directions: a stray metadata.namespace on a cluster-scoped object does
-# not change how any policy here evaluates it, and a missing stamp only puts
-# the object back in `default`, which is where it already was.
+# resources must *not* be stamped with a namespace, and check_app_projects
+# knows which half of the whitelist asymmetry a kind falls under. Getting one
+# wrong is no longer cheap in both directions: a missing entry makes
+# check_app_projects treat a cluster-scoped object as namespaced and skip the
+# clusterResourceWhitelist check entirely, which is the check that matters.
+#
+# The custom kinds below are not hand-collected -- check_crd_scope asserts this
+# set against the `scope:` every rendered CRD declares, so a chart bump adding a
+# cluster-scoped CRD fails until it is listed here. Most are defined by a chart
+# without anything in this repo instantiating one yet; they are listed against
+# the day something does.
 CLUSTER_SCOPED_KINDS = {
-    "APIService", "ClusterIssuer", "ClusterPolicy", "ClusterRole",
-    "ClusterRoleBinding", "ClusterSecretStore", "CustomResourceDefinition",
-    "IngressClass", "MutatingWebhookConfiguration", "Namespace",
+    "APIService", "ClusterCleanupPolicy", "ClusterCloudEventSource",
+    "ClusterEphemeralReport", "ClusterExternalSecret", "ClusterGenerator",
+    "ClusterImageCatalog", "ClusterIssuer", "ClusterPolicy",
+    "ClusterPolicyReport", "ClusterPushSecret", "ClusterRole",
+    "ClusterRoleBinding", "ClusterSecretStore", "ClusterTriggerAuthentication",
+    "CustomResourceDefinition", "DeletingPolicy", "GeneratingPolicy",
+    "GlobalContextEntry", "ImageValidatingPolicy", "IngressClass",
+    "MutatingPolicy", "MutatingWebhookConfiguration", "Namespace",
     "PriorityClass", "StorageClass", "ValidatingPolicy",
     "ValidatingWebhookConfiguration",
 }
@@ -140,6 +152,13 @@ CLUSTER_SCOPED_KINDS = {
 PODSPEC_KINDS = {
     "Pod", "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob",
 }
+
+# The AppProject rules, shared with terraform/60-argo-cd/gitops.tf rather than
+# copied -- see the header of that file. The single cluster this repo deploys
+# to; AppProject destinations match on server, and every registry Application
+# targets the in-cluster one.
+APPPROJECTS_FILE = REPO_ROOT / "terraform/60-argo-cd/appprojects.yaml"
+DEST_SERVER = "https://kubernetes.default.svc"
 
 errors: list[str] = []
 
@@ -355,6 +374,193 @@ def check_annotation_cap(docs: list[dict], source: str, server_side_apply: bool)
             )
 
 
+def _glob(pattern: str, val: str, allow_negation: bool = True) -> bool:
+    """argo-cd pkg/apis/application/v1alpha1/app_project_types.go globMatch."""
+    if allow_negation and pattern.startswith("!"):
+        return not fnmatch.fnmatchcase(val, pattern[1:])
+    if pattern == "*":
+        return True
+    return fnmatch.fnmatchcase(val, pattern)
+
+
+def _destination_permitted(destinations: list[dict], namespace: str) -> bool:
+    """argo-cd isDestinationMatched.
+
+    A deny pattern returns early, so `!kube-system` beats the `*` allow no
+    matter which order the two appear in. The upstream function also matches
+    on destination *name*; no project here sets one, so that branch is omitted
+    rather than reimplemented against nothing.
+    """
+    any_matched = False
+    for item in destinations:
+        item_ns = item.get("namespace", "")
+        server_matched = _glob(item.get("server", ""), DEST_SERVER)
+        ns_matched = _glob(item_ns, namespace)
+        if server_matched and ns_matched:
+            any_matched = True
+        elif not ns_matched and item_ns.startswith("!") and server_matched:
+            return False
+    return any_matched
+
+
+def _in_resource_list(group: str, kind: str, entries: list[dict]) -> bool:
+    return any(
+        _glob(e.get("group", ""), group, allow_negation=False)
+        and _glob(e.get("kind", ""), kind, allow_negation=False)
+        for e in entries
+    )
+
+
+def _group_kind_permitted(project: dict, group: str, kind: str, namespaced: bool) -> bool:
+    """argo-cd IsGroupKindNamePermitted.
+
+    The two halves are asymmetric and it is the asymmetry that bites: an absent
+    namespaceResourceWhitelist permits *every* namespaced kind, while an absent
+    or empty clusterResourceWhitelist permits *no* cluster-scoped kind. Neither
+    default is the one a reader assumes from the other.
+    """
+    if namespaced:
+        whitelist = project.get("namespaceResourceWhitelist")
+        return whitelist is None or (
+            len(whitelist) != 0 and _in_resource_list(group, kind, whitelist)
+        )
+    whitelist = project.get("clusterResourceWhitelist") or []
+    return len(whitelist) != 0 and _in_resource_list(group, kind, whitelist)
+
+
+def load_appprojects() -> dict:
+    raw = yaml.safe_load(APPPROJECTS_FILE.read_text(encoding="utf-8"))
+    return {
+        name: {
+            "destinations": proj["destinations"],
+            "clusterResourceWhitelist": (
+                raw["sharedClusterResources"] + proj["extraClusterResources"]
+            ),
+        }
+        for name, proj in raw["projects"].items()
+    }
+
+
+def selftest_appproject_matcher(projects: dict) -> None:
+    """Assert the matcher still discriminates before trusting its verdicts.
+
+    It is a reimplementation of ArgoCD's, because ArgoCD ships no offline
+    validator for this the way Kyverno ships a CLI -- so unlike the policy pass
+    there is no authoritative second opinion in CI. The failure that matters is
+    silent: a matcher that returns True for everything reports no findings and
+    reads exactly like a clean run. These cases are the ones the live cluster
+    already answered for us (documentation/programming/gitops_apps.md).
+    """
+    home, ks = projects["homelab"], projects["homelab-kube-system"]
+    cases = [
+        (_destination_permitted(home["destinations"], "monitoring"), True,
+         "homelab permits an ordinary namespace"),
+        (_destination_permitted(home["destinations"], "kube-system"), False,
+         "homelab denies kube-system"),
+        (_destination_permitted(ks["destinations"], "kube-system"), True,
+         "homelab-kube-system permits kube-system"),
+        (_destination_permitted(ks["destinations"], "kube-public"), False,
+         "homelab-kube-system still denies kube-public"),
+        (_group_kind_permitted(home, "apiregistration.k8s.io", "APIService", False), False,
+         "homelab denies APIService"),
+        (_group_kind_permitted(ks, "apiregistration.k8s.io", "APIService", False), True,
+         "homelab-kube-system permits APIService"),
+        (_group_kind_permitted(home, "apiextensions.k8s.io", "CustomResourceDefinition", False), True,
+         "homelab permits CustomResourceDefinition"),
+        (_group_kind_permitted(home, "", "Secret", True), True,
+         "no namespaceResourceWhitelist permits every namespaced kind"),
+    ]
+    for got, want, what in cases:
+        if got is not want:
+            errors.append(
+                f"[selftest] AppProject matcher is wrong: {what} returned {got}. "
+                f"Every other AppProject finding this run is untrustworthy"
+            )
+
+
+def check_crd_scope(docs: list[dict], source: str) -> None:
+    """Cross-check CLUSTER_SCOPED_KINDS against the CRDs the repo renders.
+
+    That set is hand-maintained, and check_app_projects reads it to decide
+    which half of the asymmetry above applies to a kind. A custom kind missing
+    from it is treated as namespaced, which silently skips the whitelist check
+    that is the entire point. Every CRD states its own scope, so for custom
+    kinds the answer is in the rendered output rather than in the set.
+    """
+    for d in docs:
+        if d.get("kind") != "CustomResourceDefinition":
+            continue
+        spec = d.get("spec") or {}
+        kind = (spec.get("names") or {}).get("kind")
+        if not kind:
+            continue
+        is_cluster = spec.get("scope") == "Cluster"
+        if is_cluster and kind not in CLUSTER_SCOPED_KINDS:
+            errors.append(
+                f"[{source}] CRD {d['metadata']['name']} declares scope: Cluster, "
+                f"but '{kind}' is missing from CLUSTER_SCOPED_KINDS -- "
+                f"check_app_projects would check it as if it were namespaced"
+            )
+        elif not is_cluster and kind in CLUSTER_SCOPED_KINDS:
+            errors.append(
+                f"[{source}] CRD {d['metadata']['name']} declares scope: "
+                f"{spec.get('scope')}, but '{kind}' is listed in "
+                f"CLUSTER_SCOPED_KINDS -- dump() would leave it unstamped"
+            )
+
+
+def check_app_projects(docs: list[dict], app: dict, projects: dict) -> None:
+    """Replay ArgoCD's per-object project check over what the app renders.
+
+    ArgoCD validates every object a chart produces, not just the Application's
+    spec.destination (controller/sync.go validateSyncPermissions): each
+    object's own metadata.namespace against the project destinations, its
+    group/kind against the whitelists. A chart quietly writing one RoleBinding
+    into kube-system fails the sync, and because a wave applies only once the
+    one before it is healthy, it takes every later wave down with it. Catching
+    it here costs a red PR instead.
+    """
+    name = app.get("project", "homelab")
+    project = projects.get(name)
+    if project is None:
+        errors.append(
+            f"[registry:{app['name']}] names project '{name}', which is not in "
+            f"{APPPROJECTS_FILE.relative_to(REPO_ROOT)} -- an Application whose "
+            f"project does not exist goes to an error state"
+        )
+        return
+
+    for d in docs:
+        if is_helm_test(d):
+            continue
+        kind = d.get("kind")
+        group = d.get("apiVersion", "").rpartition("/")[0]
+        namespaced = kind not in CLUSTER_SCOPED_KINDS
+        meta = d.get("metadata") or {}
+
+        if not _group_kind_permitted(project, group, kind, namespaced):
+            errors.append(
+                f"[{app['name']}] {group or '(core)'}/{kind} '{meta.get('name')}' is not "
+                f"permitted in project '{name}' -- add it to "
+                f"{'extraClusterResources' if not namespaced else 'namespaceResourceWhitelist'} "
+                f"in {APPPROJECTS_FILE.relative_to(REPO_ROOT)}"
+            )
+            continue
+
+        if not namespaced:
+            continue
+        # Same defaulting ArgoCD applies: an object that names no namespace
+        # lands in the Application's destination. dump() stamps this too, but
+        # only under --dump, so it is recomputed rather than relied on.
+        namespace = meta.get("namespace") or app["namespace"]
+        if not _destination_permitted(project["destinations"], namespace):
+            errors.append(
+                f"[{app['name']}] {kind} '{meta.get('name')}' renders into namespace "
+                f"'{namespace}', which project '{name}' denies -- the chart writes "
+                f"outside its destination namespace ('{app['namespace']}')"
+            )
+
+
 def check_registry_namespaces(registry: dict) -> None:
     """The destination namespaces, which ArgoCD creates rather than a chart.
 
@@ -391,6 +597,8 @@ def check_registry_namespaces(registry: dict) -> None:
 def render_gitops_apps() -> None:
     registry = yaml.safe_load((REPO_ROOT / "kubernetes/bootstrap/values.yaml").read_text())
     check_registry_namespaces(registry)
+    projects = load_appprojects()
+    selftest_appproject_matcher(projects)
 
     for app in registry["apps"]:
         path = REPO_ROOT / "kubernetes/apps" / app["group"] / app["name"]
@@ -440,6 +648,8 @@ def render_gitops_apps() -> None:
         check_images(docs, app["name"])
         check_namespaces(docs, app["name"])
         check_annotation_cap(docs, app["name"], ssa)
+        check_crd_scope(docs, app["name"])
+        check_app_projects(docs, app, projects)
 
 
 def render_terraform_charts() -> None:
@@ -547,7 +757,10 @@ def main() -> None:
             print(f"  - {e}")
         sys.exit(1)
 
-    print("OK -- all rendered images, namespaces and objects are within policy.")
+    print(
+        "OK -- all rendered images, namespaces and objects are within policy, "
+        "and within the AppProject each app names."
+    )
 
 
 if __name__ == "__main__":

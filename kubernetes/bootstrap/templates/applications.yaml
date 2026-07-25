@@ -14,8 +14,10 @@ spec:
   # AppProject created by terraform/60-argo-cd/gitops.tf, not by this chart --
   # a boundary this chart could rewrite would not be one. It closes the
   # cluster-scoped kinds an app may create; namespaces stay open so adding an
-  # app is still one directory plus one registry entry.
-  project: homelab
+  # app is still one directory plus one registry entry. An entry naming a
+  # project Terraform has not created lands in an error state, so the set of
+  # valid values is the set of AppProjects in gitops.tf.
+  project: {{ .project | default "homelab" }}
   source:
     repoURL: {{ $.Values.repoURL }}
     targetRevision: {{ $.Values.revision }}

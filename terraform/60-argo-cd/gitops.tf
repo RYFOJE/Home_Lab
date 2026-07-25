@@ -40,17 +40,49 @@ resource "kubernetes_secret" "azure_kv_creds" {
   }
 }
 
+locals {
+  # Shared with scripts/check_cluster_policy.py, which refuses a PR whose
+  # rendered manifests these rules would reject at sync time. One file, two
+  # readers -- a copy in the script would be a copy that drifts, and a drifted
+  # copy is green CI over a cluster that refuses the apply.
+  appprojects = yamldecode(file("${path.module}/appprojects.yaml"))
+
+  registry_project_spec = {
+    for name, proj in local.appprojects.projects : name => {
+      description  = proj.description
+      sourceRepos  = [var.gitops_repo_url]
+      destinations = proj.destinations
+      clusterResourceWhitelist = concat(
+        local.appprojects.sharedClusterResources,
+        proj.extraClusterResources,
+      )
+    }
+  }
+}
+
 # AppProjects. Terraform owns these rather than the bootstrap chart for the
 # same reason it owns the ESO credential: an AppProject is an authorization
 # boundary, and a boundary the thing it constrains can rewrite is decorative.
 # Rendered from git, the root Application would be able to widen its own
 # permissions in the same sync that used them.
 #
-# Two projects, split by blast radius:
-#   bootstrap -- the root app. Renders Applications into argocd and nothing
-#                else, so it needs no cluster-scoped permission at all.
-#   homelab   -- every app in the registry. Namespaces stay open (see below);
-#                the cluster-scoped surface is a closed list.
+# Three projects, split by blast radius:
+#   bootstrap           -- the root app. Renders Applications into argocd and
+#                          nothing else, so it needs no cluster-scoped
+#                          permission at all. Defined here rather than in
+#                          appprojects.yaml: its one destination is the argocd
+#                          namespace resource, not a literal.
+#   homelab             -- the registry default.
+#   homelab-kube-system -- the same, plus the kube-system destination, for the
+#                          apps whose upstream chart writes there.
+#
+# The rules for the latter two are appprojects.yaml (see the local above).
+#
+# ArgoCD validates every rendered object individually, not just the
+# Application's destination: controller/sync.go checks each object's own
+# metadata.namespace against the project's destinations and its group/kind
+# against clusterResourceWhitelist. A chart writing outside its destination
+# namespace therefore needs that namespace permitted.
 resource "kubectl_manifest" "project_bootstrap" {
   depends_on = [helm_release.argocd]
 
@@ -89,51 +121,25 @@ resource "kubectl_manifest" "project_homelab" {
       name      = "homelab"
       namespace = kubernetes_namespace.argocd.metadata[0].name
     }
-    spec = {
-      description = "Every app in the kubernetes/bootstrap registry."
-      sourceRepos = [var.gitops_repo_url]
-      # Namespaces stay wildcarded on purpose. Enumerating the six current
-      # namespaces would mean a Terraform apply every time an app lands in a
-      # new one, which breaks the "adding an app = one directory + one
-      # registry entry" property this repo is built around
-      # (documentation/programming/gitops_apps.md). The real blast radius is
-      # cluster-scoped resources, and that list below is closed. The three
-      # API-server namespaces are denied outright -- Kyverno's default
-      # resourceFilters already skip them, so a write there would land
-      # unpoliced.
-      destinations = [
-        { server = "https://kubernetes.default.svc", namespace = "*" },
-        { server = "https://kubernetes.default.svc", namespace = "!kube-system" },
-        { server = "https://kubernetes.default.svc", namespace = "!kube-public" },
-        { server = "https://kubernetes.default.svc", namespace = "!kube-node-lease" },
-      ]
-      # The closed set of cluster-scoped kinds the registry apps render.
-      # Derived by rendering each one with `helm template --include-crds` and
-      # reading off the kinds whose objects have no namespace; re-derive the
-      # same way on a chart bump. Deliberately no counts recorded here -- they
-      # would be wrong after the first bump, and the list is the thing that
-      # has to be right. A kind missing from it fails that app's sync with a
-      # project-permission error rather than passing silently.
-      clusterResourceWhitelist = [
-        # ArgoCD manages the Namespace object itself wherever a registry entry
-        # sets createNamespace + namespaceLabels; omitting this breaks every
-        # one of them.
-        { group = "", kind = "Namespace" },
-        { group = "apiextensions.k8s.io", kind = "CustomResourceDefinition" },
-        { group = "rbac.authorization.k8s.io", kind = "ClusterRole" },
-        { group = "rbac.authorization.k8s.io", kind = "ClusterRoleBinding" },
-        { group = "admissionregistration.k8s.io", kind = "ValidatingWebhookConfiguration" },
-        { group = "admissionregistration.k8s.io", kind = "MutatingWebhookConfiguration" },
-        # The postgres app ships its own node-local class rather than using the
-        # default `longhorn` one (documentation/infrastructure/databases.md).
-        { group = "storage.k8s.io", kind = "StorageClass" },
-        # Pairs with the Kyverno rule forbidding a second store: that blocks a
-        # store created by any means, this blocks the GitOps path to one.
-        { group = "external-secrets.io", kind = "ClusterSecretStore" },
-        { group = "kyverno.io", kind = "ClusterPolicy" },
-        { group = "policies.kyverno.io", kind = "ValidatingPolicy" },
-      ]
+    spec = local.registry_project_spec["homelab"]
+  })
+}
+
+# Separate resource rather than for_each over the map: the address
+# kubectl_manifest.project_homelab is already in state, and moving it would
+# destroy and recreate a live authorization object while the apps it governs
+# are running.
+resource "kubectl_manifest" "project_homelab_kube_system" {
+  depends_on = [helm_release.argocd]
+
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "AppProject"
+    metadata = {
+      name      = "homelab-kube-system"
+      namespace = kubernetes_namespace.argocd.metadata[0].name
     }
+    spec = local.registry_project_spec["homelab-kube-system"]
   })
 }
 
@@ -143,13 +149,14 @@ resource "kubectl_manifest" "project_homelab" {
 # kubernetes_manifest needs the CRD at plan time and breaks fresh rebuilds
 # (same reasoning as 40-kube-networking).
 resource "kubectl_manifest" "root_app" {
-  # Both projects, not just bootstrap: an Application naming a project that
-  # does not exist yet goes to an error state, and the root app creates the
-  # homelab-project children immediately.
+  # Every project, not just bootstrap: an Application naming a project that
+  # does not exist yet goes to an error state, and the root app creates its
+  # children immediately.
   depends_on = [
     helm_release.argocd,
     kubectl_manifest.project_bootstrap,
     kubectl_manifest.project_homelab,
+    kubectl_manifest.project_homelab_kube_system,
   ]
 
   yaml_body = yamlencode({

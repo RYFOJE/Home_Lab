@@ -26,6 +26,10 @@ name: cluster-policy-check
 #
 # cilium.tf is in the path list because the script asserts its EXTRA_HELM_ARGS
 # mirror of that file's secretsNamespaceLabels has not drifted.
+#
+# appprojects.yaml is in it because the script reads it as the AppProject rules
+# and replays ArgoCD's per-object check against them -- tightening a project
+# has to re-run the check that says which apps the tightening breaks.
 on:
   pull_request:
     paths:
@@ -33,6 +37,7 @@ on:
       - "kubernetes/bootstrap/**"
       - "terraform/*/terraform.tfvars"
       - "terraform/40-kube-networking/cilium.tf"
+      - "terraform/60-argo-cd/appprojects.yaml"
       - "terraform/40-kube-networking/manifests/**"
       - "scripts/check_cluster_policy.py"
       - ".github/workflows/cluster-policy-check.yml"
@@ -43,6 +48,7 @@ on:
       - "kubernetes/bootstrap/**"
       - "terraform/*/terraform.tfvars"
       - "terraform/40-kube-networking/cilium.tf"
+      - "terraform/60-argo-cd/appprojects.yaml"
       - "terraform/40-kube-networking/manifests/**"
       - "scripts/check_cluster_policy.py"
       - ".github/workflows/cluster-policy-check.yml"

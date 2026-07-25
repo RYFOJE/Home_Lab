@@ -18,6 +18,10 @@ revision: main
 #   group            subfolder under kubernetes/apps/ (security, monitoring, edge, ...)
 #   namespace        destination namespace
 #   wave             argocd.argoproj.io/sync-wave ordering (lowest first)
+#   project          AppProject (terraform/60-argo-cd/gitops.tf), default
+#                    homelab. homelab-kube-system for a chart that also writes
+#                    into kube-system -- ArgoCD validates every rendered
+#                    object's own namespace, not just the destination below.
 #   needsDomain      forward the domain as helm parameter global.domain
 #   needsTenant      forward the tenant as helm parameter global.tenantId
 #   needsVaultUrl    forward the Key Vault URL as helm parameter vaultUrl
@@ -83,6 +87,9 @@ apps:
     namespace: monitoring
     wave: "0"
     needsDomain: true
+    # coreDns stays enabled, and the chart puts its scrape-target Service in
+    # kube-system alongside the CoreDNS pods it points at.
+    project: homelab-kube-system
     createNamespace: true
     namespaceLabels:
       pod-security.kubernetes.io/enforce: baseline
@@ -113,6 +120,25 @@ apps:
     group: monitoring
     namespace: monitoring-system
     wave: "2"
+
+  # -- wave 0: autoscaling. No dependency on kube-prometheus-stack's CRDs --
+  #    prometheus.metricServer.enabled stays off, so nothing here renders a
+  #    monitoring.coreos.com kind.
+  - name: keda
+    group: autoscaling
+    namespace: keda
+    wave: "0"
+    # The metrics apiserver's delegated auth needs a RoleBinding in kube-system
+    # against extension-apiserver-authentication; the chart emits it
+    # unconditionally. The project also carries the APIService kind.
+    project: homelab-kube-system
+    createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: restricted
+    extraSyncOptions:
+      # scaledjobs.keda.sh exceeds the client-side last-applied-configuration
+      # annotation limit.
+      - ServerSideApply=true
 
   # -- wave 1-2: database. The operator (CRDs, controller, admission webhooks)
   #    must be synced and healthy before the Cluster resource that needs it.

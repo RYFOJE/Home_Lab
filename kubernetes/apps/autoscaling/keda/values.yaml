@@ -1,0 +1,27 @@
+# KEDA: event-driven autoscaler. Scales Deployments/StatefulSets/Jobs on
+# external metrics -- queue depth, topic backlog, etc. -- via the
+# ScaledObject/ScaledJob CRDs; a per-consumer TriggerAuthentication carries
+# the credential a scaler needs, including the built-in azure-servicebus
+# trigger (../../../documentation/programming/autoscaling.md).
+#
+# Chart defaults are used as-is against this cluster's Kyverno rules:
+#   - the operator, metrics-apiserver and admission-webhooks images are all
+#     ghcr.io/kedacore/* -- an allow-listed registry, tag pinned to the chart's
+#     appVersion (never latest);
+#   - all three pods are restricted-PSA clean as shipped (runAsNonRoot,
+#     seccompProfile RuntimeDefault, capabilities drop ALL, no privilege
+#     escalation, read-only root filesystem), hence enforce: restricted on the
+#     namespace;
+#   - its ClusterRoleBindings target the chart's own ClusterRoles, not
+#     cluster-admin;
+#   - the ValidatingWebhookConfiguration ships failurePolicy: Ignore (KEDA's
+#     own default, unlike Kyverno's Fail) -- a webhook outage lets
+#     ScaledObject/TriggerAuthentication writes through unvalidated rather
+#     than blocking them, so the single admission-webhook replica does not
+#     need the HA treatment kyverno/cloudnative-pg get for their fail-closed
+#     webhooks;
+#   - scaledjobs.keda.sh renders to ~324 KB, past the 262144-byte
+#     last-applied-configuration cap, so the registry entry carries
+#     ServerSideApply=true. Re-measure with `helm template keda --include-crds`
+#     on a chart bump -- the other five CRDs sit at 5-14 KB today.
+keda: {}

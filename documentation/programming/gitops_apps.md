@@ -13,7 +13,7 @@ kubernetes/
 │   ├── values.yaml       # the app registry
 │   └── templates/applications.yaml
 └── apps/
-    └── <group>/          # security, monitoring, edge, database -- by function
+    └── <group>/          # security, monitoring, edge, database, autoscaling -- by function
         └── <name>/       # one directory per app
             ├── Chart.yaml    # umbrella: pins the upstream chart as a dependency
             ├── values.yaml   # all configuration, under the dependency's name key
@@ -28,15 +28,61 @@ at render time; no `Chart.lock` is committed. An app with no upstream chart
 (`cloudflared/`) is the same shape minus the dependency — plain `templates/`.
 
 Adding an app: create `kubernetes/apps/<group>/<name>/` (an existing group —
-`security`, `monitoring`, `edge`, `database` — or a new one), add one entry to
+`security`, `monitoring`, `edge`, `database`, `autoscaling` — or a new one), add one entry to
 the registry in `kubernetes/bootstrap/values.yaml` with both `name` and `group`
 set (the registry template renders `path: kubernetes/apps/{{ .group }}/{{
 .name }}`), push. The registry entry also sets the destination namespace,
 sync wave, which injected parameters the app receives (`needsDomain`,
 `needsTenant`, `needsVaultUrl`), an optional edge-mode gate (`onlyEdgeMode`),
-and any extra sync options. Future candidates follow the same pattern (for
-example `authentik/`, `harbor/`, `open-webui/`, or migrations of the
-Terraform-managed `cert-manager`/`longhorn`).
+an optional `project`, and any extra sync options. Future candidates follow the
+same pattern (for example `authentik/`, `harbor/`, `open-webui/`, or migrations
+of the Terraform-managed `cert-manager`/`longhorn`).
+
+## AppProjects
+
+Terraform owns the AppProjects (60-argo-cd `gitops.tf`), not the bootstrap
+chart: a boundary the thing it constrains can rewrite is decorative. The root
+app would otherwise be able to widen its own permissions in the same sync that
+used them.
+
+- `bootstrap` — the root app alone. Renders `Application`s into `argocd` and
+  nothing else, so it holds no cluster-scoped permission at all.
+- `homelab` — the registry default. Namespaces are wildcarded except
+  `kube-system`, `kube-public` and `kube-node-lease`; the cluster-scoped kinds
+  are a closed list.
+- `homelab-kube-system` — the same, plus the `kube-system` destination and the
+  `APIService` kind. Opted into with `project: homelab-kube-system` on a
+  registry entry.
+
+Namespaces stay wildcarded in `homelab` on purpose: enumerating them would mean
+a Terraform apply every time an app lands in a new one, which breaks the "one
+directory plus one registry entry" property. The real blast radius is
+cluster-scoped kinds, and that list is closed — a kind missing from it fails
+that app's sync with a project-permission error rather than passing silently.
+Re-derive it with `helm template <app> --include-crds`, reading off the kinds
+whose objects carry no namespace.
+
+ArgoCD validates each rendered object individually, not just the Application's
+`spec.destination`: `controller/sync.go` checks every object's own
+`metadata.namespace` against the project destinations, and its group/kind
+against `clusterResourceWhitelist`. A chart that writes outside its destination
+namespace therefore needs that namespace permitted. Two do, and neither offers
+a value to stop it — `kube-prometheus-stack` puts the CoreDNS scrape-target
+Service beside the pods it scrapes, and `keda` needs
+`keda-operator-auth-reader` in `kube-system` so the metrics apiserver can read
+`extension-apiserver-authentication` for delegated auth. Both name
+`homelab-kube-system`.
+
+That is a second project rather than a `!kube-system` removed from `homelab`
+because ArgoCD destinations match on namespace only, never on kind: the
+exception cannot be narrowed to those two objects, so it is narrowed to the two
+apps instead. `kube-system` stays closed to the rest of the registry, which is
+where it matters — Kyverno's default `resourceFilters` drop that namespace, so
+a write there lands unpoliced. `APIService` sits in the same project for the
+same reason: KEDA registers `v1beta1.external.metrics.k8s.io` (the aggregated
+API the HPA controller reads external metrics through, and the reason KEDA
+scales anything), and an `APIService` can take over an API group cluster-wide,
+so it stays off the project the other apps share.
 
 ## Edge-mode gating
 
@@ -250,6 +296,8 @@ app's `managedNamespaceMetadata`, so they exist before the first pod:
   agents only (node-exporter, alloy-logs): hostNetwork/hostPID/hostPath. PSA
   enforcement is namespace-wide, hence the split.
 - `kyverno` (owned by `kyverno`) — enforce `baseline`.
+- `keda` (owned by `keda`) — enforce `restricted`. All three KEDA pods are
+  compliant as shipped (`programming/autoscaling.md`).
 
 The only Terraform-owned namespace is `external-secrets` — it must hold the
 bootstrap credential before ArgoCD runs. Its PSA label is set on the
@@ -295,20 +343,21 @@ first (wave `-2` External Secrets Operator + Kyverno, wave `-1` the store,
 the Key Vault isolation policies, and general hardening policies), then apps
 from wave `0`.
 
-`external-secrets`, `kyverno`, `kube-prometheus-stack` and `cloudnative-pg`
-additionally require `ServerSideApply=true`: a client-side apply stores the
-whole object in the `last-applied-configuration` annotation, which the API
+`external-secrets`, `kyverno`, `kube-prometheus-stack`, `cloudnative-pg` and
+`keda` additionally require `ServerSideApply=true`: a client-side apply stores
+the whole object in the `last-applied-configuration` annotation, which the API
 server caps at 262144 bytes, and each ships CRDs past it —
 `secretstores`/`clustersecretstores` at ~349 KB, `policies`/`clusterpolicies`
 at ~652 KB, six of the `monitoring.coreos.com` CRDs between ~345 and
-~482 KB, and `clusters`/`poolers.postgresql.cnpg.io` at ~272 KB and ~339 KB.
+~482 KB, `clusters`/`poolers.postgresql.cnpg.io` at ~272 KB and ~339 KB, and
+`scaledjobs.keda.sh` at ~324 KB.
 
 CRDs are the usual way past that cap, not the only one — a ConfigMap carrying
 a vendored dashboard or rule set reaches it just as easily. So the rule is by
 object, not by kind: any app rendering *anything* past the limit needs the
 option, and `scripts/check_cluster_policy.py` measures every rendered object
 rather than only CRDs. The manual check is `helm template <app> --include-crds`
-(what ArgoCD renders) measuring each document as JSON. Two of the four are wave
+(what ArgoCD renders) measuring each document as JSON. Two of the five are wave
 `-2`, so getting this wrong stalls the root app before anything syncs.
 
 A wave is not just a preference: the root app applies wave *n* only once wave
