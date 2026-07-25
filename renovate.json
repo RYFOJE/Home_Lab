@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "description": "Keeps the deliberately-pinned versions fresh: Terraform providers (terraform manager), umbrella-chart dependencies in kubernetes/apps/**/Chart.yaml (helmv3 manager), container images in helm values (helm-values manager, e.g. the cloudflared image), and the helm chart pins living in *.tfvars via the annotated regex manager below.",
+  "description": "Keeps the deliberately-pinned versions fresh: Terraform providers (terraform manager), umbrella-chart dependencies in kubernetes/apps/**/Chart.yaml (helmv3 manager), container images in helm values (helm-values manager, e.g. the cloudflared image), the helm chart pins living in *.tfvars, and the Kyverno CLI pin in the cluster-policy-check workflow via the annotated regex managers below.",
   "customManagers": [
     {
       "customType": "regex",
@@ -11,6 +11,14 @@
         "=\\s*\"(?<currentValue>[^\"]+)\"\\s*#\\s*renovate: helmRepo=(?<registryUrl>\\S+) chart=(?<depName>\\S+)"
       ],
       "datasourceTemplate": "helm"
+    },
+    {
+      "customType": "regex",
+      "description": "Kyverno CLI pin in the cluster-policy-check workflow. The github-actions manager does not see it: it is an env var, not a `uses:`. Should track the kyverno chart's appVersion so CI evaluates policies on the engine the cluster runs.",
+      "managerFilePatterns": ["/^\\.github/workflows/cluster-policy-check\\.yml$/"],
+      "matchStrings": [
+        "#\\s*renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+KYVERNO_CLI_VERSION:\\s*(?<currentValue>\\S+)"
+      ]
     }
   ]
 }

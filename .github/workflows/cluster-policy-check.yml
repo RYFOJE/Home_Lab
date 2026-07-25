@@ -67,13 +67,29 @@ jobs:
 
       - run: pip install pyyaml
 
-      # Keep this in step with the kyverno chart's appVersion
+      # Installed straight from the release rather than via
+      # kyverno/action-install-cli: that action is unmaintained (last release
+      # Aug 2023) and its cosign path is already broken against current
+      # releases, which ship .sigstore.json instead of the .sig/.pem it fetches.
+      # All it does for the non-verifying path is this curl and tar, so the
+      # third-party indirection buys nothing.
+      #
+      # KYVERNO_CLI_VERSION tracks the kyverno chart's appVersion
       # (kubernetes/apps/security/kyverno/Chart.yaml) so CI evaluates the
-      # policies on the same engine the cluster does.
-      # renovate: datasource=github-releases depName=kyverno/kyverno
-      - uses: kyverno/action-install-cli@v0.2.1
-        with:
-          release: v1.18.2
+      # policies on the same engine the cluster runs. Renovate keeps it fresh
+      # through the custom manager in renovate.json.
+      - name: Install the Kyverno CLI
+        env:
+          # renovate: datasource=github-releases depName=kyverno/kyverno
+          KYVERNO_CLI_VERSION: v1.18.2
+        run: |
+          curl -sSfL -o kyverno.tar.gz \
+            "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_CLI_VERSION}/kyverno-cli_${KYVERNO_CLI_VERSION}_linux_x86_64.tar.gz"
+          tar -xzf kyverno.tar.gz kyverno
+          rm kyverno.tar.gz
+          sudo install -m 0755 kyverno /usr/local/bin/kyverno
+          rm kyverno
+          kyverno version
 
       - name: Render manifests and check the mirrored rules
         run: python scripts/check_cluster_policy.py --dump rendered
