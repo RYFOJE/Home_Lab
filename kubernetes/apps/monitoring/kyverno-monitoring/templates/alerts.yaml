@@ -1,0 +1,68 @@
+# Auto-discovered by kube-prometheus-stack (ruleSelectorNilUsesHelmValues:
+# false, kubernetes/apps/monitoring/kube-prometheus-stack/values.yaml) and routed
+# through the existing default Alertmanager route -> discord receiver, same
+# as every other alert in this cluster (documentation/infrastructure/
+# observability.md).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kyverno
+spec:
+  groups:
+    - name: kyverno
+      rules:
+        # Every enforcing ClusterPolicy in this cluster pins
+        # spec.webhookConfiguration.failurePolicy: Fail (fail-closed): if no
+        # admission-controller pod is ready, the API server starts blocking
+        # admission cluster-wide. Uses kube-state-metrics (not a
+        # Kyverno-specific metric/job label) so it doesn't depend on how
+        # the ServiceMonitor next to this file names its scrape job.
+        #
+        # The absent() arm is load-bearing: `sum(...) == 0` over an empty
+        # vector returns no samples, so if the pods (or the whole namespace)
+        # disappear the series vanishes and a bare == 0 would go quiet during
+        # exactly the outage it exists to catch.
+        #
+        # container="kyverno" is the admission controller specifically -- the
+        # other three controllers name their container "controller", and init
+        # containers report under kube_pod_init_container_status_ready.
+        - alert: KyvernoAdmissionControllerDown
+          expr: >-
+            sum(kube_pod_container_status_ready{namespace="kyverno", container="kyverno"}) == 0
+            or absent(kube_pod_container_status_ready{namespace="kyverno", container="kyverno"})
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: No ready Kyverno admission-controller pod for 5m.
+            description: >-
+              Every enforcing ClusterPolicy is fail-closed
+              (spec.webhookConfiguration.failurePolicy: Fail), so this blocks
+              all resource creation/updates cluster-wide until a pod becomes
+              ready again. Fires equally if kube-state-metrics stopped
+              reporting the namespace.
+
+        # Early warning for the Enforce-mode hardening policies
+        # (kubernetes/apps/security/kyverno-policies): a sustained spike is either an
+        # attack/misconfiguration being caught, or one of those policies
+        # incorrectly blocking legitimate deploys.
+        #
+        # resource_request_operation != "" restricts this to admission
+        # results. Background scans increment the same counter, and
+        # workload-best-practices' two Audit rules fail for every third-party
+        # container in the cluster that ships without a probe or without
+        # resource requests (Cilium, cert-manager, Longhorn, Traefik, multus)
+        # on each scan cycle -- counting those would make the rate a measure of
+        # report volume rather than of denies.
+        - alert: KyvernoHighPolicyDenyRate
+          expr: >-
+            sum(rate(kyverno_policy_results_total{rule_result="fail", resource_request_operation!=""}[15m])) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Sustained high rate of Kyverno admission denies.
+            description: >-
+              Check `kubectl get clusterpolicyreport,policyreport -A` for
+              which policy/resource is failing -- could be a misconfigured
+              allow-list (kyverno-policies) blocking a legitimate deploy.

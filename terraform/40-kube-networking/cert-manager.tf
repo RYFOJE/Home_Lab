@@ -6,7 +6,14 @@
 
 resource "kubernetes_namespace" "cert_manager" {
   metadata {
-    name = "cert-manager" # baseline PSA is fine; no opt-out labels needed
+    name = "cert-manager"
+    # Baseline PSA is fine; no opt-out needed. Declared explicitly because
+    # kyverno-policies' require-namespace-psa-label denies any namespace
+    # without an enforce label -- on CREATE and on UPDATE, so an unlabelled
+    # namespace would be frozen against future Terraform edits.
+    labels = {
+      "pod-security.kubernetes.io/enforce" = "baseline"
+    }
   }
 }
 

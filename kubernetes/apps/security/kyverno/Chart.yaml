@@ -1,6 +1,6 @@
 apiVersion: v2
 name: kyverno
-description: Policy engine -- enforces the ExternalSecret namespace-prefix rule (umbrella over the upstream chart)
+description: Policy engine (umbrella over the upstream chart) -- policies themselves live in cluster-secrets and kyverno-policies
 type: application
 version: 0.1.0
 dependencies:

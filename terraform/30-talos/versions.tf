@@ -14,5 +14,11 @@ terraform {
       source  = "siderolabs/talos"
       version = "~> 0.11"
     }
+    # Writes only: the admin-access copies of talosconfig/kubeconfig
+    # (kv.tf). No secrets are read by this layer.
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
   }
 }

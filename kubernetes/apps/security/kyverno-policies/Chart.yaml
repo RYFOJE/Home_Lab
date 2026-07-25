@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kyverno-policies
+description: General cluster hardening ClusterPolicies and ValidatingPolicies (namespace PSA labels, image registry allowlist, no :latest tags, RBAC cluster-admin restriction, pod probe/resource best-practice audits) -- separate from cluster-secrets, which is scoped to Key Vault isolation only
+type: application
+version: 0.1.0

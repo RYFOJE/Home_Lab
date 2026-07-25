@@ -12,6 +12,15 @@
 # Matches are by bare kind, not group/version-qualified: a version-qualified
 # match (external-secrets.io/v1/...) would silently skip objects submitted via
 # another served apiVersion (e.g. a deprecated v1beta1), bypassing isolation.
+#
+# spec.webhookConfiguration.failurePolicy is pinned to Fail on every policy
+# below (already Kyverno's default -- pinning makes the fail-closed decision
+# visible in git, matching kubernetes/apps/security/kyverno-policies). It is a
+# policy-level field: rules within one policy share the same failure behaviour,
+# there is no per-rule override. Fail-closed means a Kyverno outage blocks all
+# admission cluster-wide; kubernetes/apps/security/kyverno/values.yaml runs 2
+# admission-controller replicas (chart default PodDisruptionBudget + soft
+# anti-affinity) to make that outage less likely.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -23,6 +32,8 @@ metadata:
       via explicit data[] entries.
 spec:
   background: false
+  webhookConfiguration:
+    failurePolicy: Fail
   rules:
     # 1. Only the shared store, and at least one explicit data[] entry.
     - name: only-shared-store-and-explicit-data
@@ -93,6 +104,8 @@ metadata:
   name: single-secretstore
 spec:
   background: false
+  webhookConfiguration:
+    failurePolicy: Fail
   rules:
     - name: only-azure-kv-clustersecretstore
       match:

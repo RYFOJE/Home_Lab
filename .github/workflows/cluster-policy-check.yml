@@ -1,0 +1,92 @@
+name: cluster-policy-check
+
+# Renders every chart this cluster admits resources from and checks it against
+# what kubernetes/apps/security/kyverno-policies enforces at admission time.
+# Runs on the surface Renovate itself opens PRs against, so a chart bump
+# introducing a disallowed registry, a namespace with a missing or `privileged`
+# PSA label, or a CRD past the annotation-size cap fails here, not on the next
+# pod restart after merge -- and not by stalling a live wave -1/-2 sync.
+#
+# Two passes over the same rendered output:
+#   1. scripts/check_cluster_policy.py, which owns the CRD annotation-size cap
+#      and the registry's createNamespace/namespaceLabels pairing -- neither of
+#      which Kyverno can see, since one is about how ArgoCD applies a manifest
+#      and the other about a manifest that does not exist yet.
+#   2. the Kyverno CLI running the real policy file over the manifests the
+#      script dumps. The script's image and PSA checks are a hand-written
+#      mirror of those policies and a mirror can drift; this pass is the one
+#      with authority, and it catches what the mirror structurally cannot --
+#      an unresolved variable, a broken autogen rewrite, a rule erroring
+#      instead of denying.
+#
+# --audit-warn is required, not cosmetic: workload-best-practices is Audit for
+# third-party charts this repo does not author (Cilium, cert-manager, Longhorn,
+# Traefik, multus), which produce ~65 warnings. Without the flag the CLI counts
+# those as failures and the job never goes green.
+#
+# cilium.tf is in the path list because the script asserts its EXTRA_HELM_ARGS
+# mirror of that file's secretsNamespaceLabels has not drifted.
+on:
+  pull_request:
+    paths:
+      - "kubernetes/apps/**"
+      - "kubernetes/bootstrap/**"
+      - "terraform/*/terraform.tfvars"
+      - "terraform/40-kube-networking/cilium.tf"
+      - "terraform/40-kube-networking/manifests/**"
+      - "scripts/check_cluster_policy.py"
+      - ".github/workflows/cluster-policy-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "kubernetes/apps/**"
+      - "kubernetes/bootstrap/**"
+      - "terraform/*/terraform.tfvars"
+      - "terraform/40-kube-networking/cilium.tf"
+      - "terraform/40-kube-networking/manifests/**"
+      - "scripts/check_cluster_policy.py"
+      - ".github/workflows/cluster-policy-check.yml"
+
+# Nothing past checkout needs the token.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml
+
+      # Keep this in step with the kyverno chart's appVersion
+      # (kubernetes/apps/security/kyverno/Chart.yaml) so CI evaluates the
+      # policies on the same engine the cluster does.
+      # renovate: datasource=github-releases depName=kyverno/kyverno
+      - uses: kyverno/action-install-cli@v0.2.1
+        with:
+          release: v1.18.2
+
+      - name: Render manifests and check the mirrored rules
+        run: python scripts/check_cluster_policy.py --dump rendered
+
+      # Both policy apps, not just kyverno-policies: the dump stamps each
+      # GitOps app's destination namespace, which is what cluster-secrets'
+      # keys-carry-namespace-prefix rule builds its expected Key Vault prefix
+      # from -- so an ExternalSecret reaching for another namespace's key is
+      # caught here too.
+      - name: Evaluate the real policies against the rendered manifests
+        run: |
+          kyverno apply \
+            kubernetes/apps/security/kyverno-policies/files/policies.yaml \
+            kubernetes/apps/security/cluster-secrets/files/policies.yaml \
+            --resource rendered \
+            --audit-warn

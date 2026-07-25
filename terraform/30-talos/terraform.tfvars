@@ -1,6 +1,11 @@
 # Non-secret configuration for the 30-talos layer. Safe to commit: this layer
 # reads no Key Vault secrets (documentation/secrets.md) -- machine secrets and
-# the kubeconfig are generated into Terraform state.
+# the kubeconfig are generated into Terraform state. It does WRITE two: the
+# break-glass talosconfig/kubeconfig copies (kv.tf), so that losing this
+# layer's state does not also cost you access to a running cluster.
+
+key_vault_name                = "rj-london"
+key_vault_resource_group_name = "terraform"
 #
 # Node IPs, storage IPs, and the factory installer image all come from the
 # 20-proxmox remote state -- nothing node-specific to set here.

@@ -1,0 +1,513 @@
+# General cluster hardening -- separate from cluster-secrets, which is scoped
+# only to Key Vault/ExternalSecret isolation. Four policies, in two tiers.
+#
+# Enforcing (failurePolicy: Fail -- fail-closed, these reject rather than flag):
+#   - require-namespace-psa-label   every Namespace must declare a PSA enforce
+#                                   level, and that level must be baseline or
+#                                   restricted outside a named exception list;
+#   - image-supply-chain            container images must come from a known
+#                                   registry and carry an explicit, immutable
+#                                   tag;
+#   - rbac-hardening                no new binding to the cluster-admin
+#                                   ClusterRole.
+#
+# Reporting (failurePolicy: Ignore -- these never deny, see below):
+#   - workload-best-practices       every container should define a probe and
+#                                   CPU/memory requests plus a memory limit
+#                                   (adapted from kyverno.io's best-practices
+#                                   require-probes / require-pod-requests-limits).
+#
+# failurePolicy is per policy, not per rule, and it governs what the API server
+# does when the *webhook is unreachable* -- it is unrelated to failureAction,
+# which governs what happens when a rule's condition fails. The three enforcing
+# policies pin Fail: a Kyverno outage blocks admission cluster-wide rather than
+# letting an unchecked image or an unlabelled namespace through, which is the
+# point of enforcing them at all. kubernetes/apps/security/kyverno/values.yaml
+# runs 2 admission-controller replicas (chart default PodDisruptionBudget +
+# soft anti-affinity) to make that outage less likely, and
+# kubernetes/apps/monitoring/kyverno-monitoring alerts on it.
+#
+# workload-best-practices pins Ignore instead, and this is the whole reason it
+# is a separate policy rather than two more rules above. Its rules are Audit:
+# they never deny anything, so extending the fail-closed blast radius to cover
+# them would buy nothing and cost cluster-wide admission during an outage.
+# Kyverno builds one webhook configuration per failurePolicy, so the split is
+# real -- an outage takes down admission for the three policies that enforce
+# something, and this one silently stops reporting.
+#
+# Both rules here are Audit rather than Enforce by design: rendering every
+# GitOps app and Terraform-pinned chart this repo installs (the same set
+# scripts/check_cluster_policy.py covers) turned up dozens of non-compliant
+# containers in infrastructure this repo does not author -- Cilium's init
+# containers, cert-manager's cainjector and startupapicheck Job, Longhorn's
+# driver-deployer and UI, ArgoCD's redis-ha subchart, External Secrets and
+# Traefik all ship containers missing a probe, missing requests/limits, or
+# both. Enforcing would deny that infrastructure on its next rollout over a
+# chart default this repo does not control. Per-app tightening (setting probes
+# and resources in the umbrella chart's values.yaml, where this repo does own
+# the values) is the path to Enforce, not a cluster-wide flip.
+#
+# Everything here is written in JMESPath rather than CEL on purpose. The chart
+# ships features.generateValidatingAdmissionPolicy.enabled: true, and a
+# single-rule CEL ClusterPolicy matching Pods is exactly the shape Kyverno
+# promotes into a native Kubernetes ValidatingAdmissionPolicy. That would move
+# evaluation into the API server and send Audit results to the API-server audit
+# log instead of the PolicyReports these rules exist to populate. A JMESPath
+# rule is not eligible for promotion, so the reports are guaranteed.
+#
+# background: true on every policy here (unlike cluster-secrets' background:
+# false) -- background scanning only ever produces PolicyReport/
+# ClusterPolicyReport entries, it never blocks or modifies an existing
+# resource. That gives retroactive compliance visibility for free, including
+# for namespaces/workloads this repo doesn't manage via GitOps (the
+# Terraform-installed Longhorn/cert-manager/Traefik/ArgoCD layers). Note
+# match/exclude apply to background scanning too, so an excluded namespace is
+# invisible to reports as well as to admission.
+#
+# Two exclusions are not ours and apply to every policy in the cluster: the
+# Kyverno ConfigMap's default resourceFilters drop [*/*,kube-system,*],
+# [*/*,kube-public,*], [*/*,kube-node-lease,*] and [*/*,kyverno,*] before any
+# policy is evaluated. So Cilium and the Talos static pods (kube-system) are
+# out of scope for both admission and reports.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-namespace-psa-label
+  annotations:
+    policies.kyverno.io/description: >-
+      Every Namespace must declare a Pod Security Admission enforce level, and
+      that level must be baseline or restricted outside a named exception list.
+spec:
+  background: true
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    # Validate fires on UPDATE as well as CREATE, so any namespace that exists
+    # without the label would be frozen against all future edits. The four
+    # namespaces the API server creates for itself are the only ones nothing in
+    # this repo can label; every other namespace gets its label either from an
+    # app registry entry (namespaceLabels) or from its Terraform
+    # kubernetes_namespace resource.
+    #
+    # All four are listed rather than relying on Kyverno's default
+    # resourceFilters to drop three of them. A resource filter entry is
+    # [Kind,Namespace,Name] and a Namespace object is cluster-scoped -- its
+    # own .metadata.namespace is empty -- so it is not obvious that
+    # [*/*,kube-system,*] matches the Namespace/kube-system object itself
+    # rather than only the things inside it. Naming them here does not depend
+    # on the answer.
+    - name: require-psa-enforce-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+      exclude:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              names:
+                - default
+                - kube-node-lease
+                - kube-public
+                - kube-system
+      validate:
+        failureAction: Enforce
+        message: >-
+          Namespace must carry a pod-security.kubernetes.io/enforce label
+          (baseline/restricted/privileged).
+        pattern:
+          metadata:
+            labels:
+              pod-security.kubernetes.io/enforce: "?*"
+
+    # Requiring the label to exist only enforces that the knob is set, not what
+    # it is set to. documentation/programming/gitops_apps.md makes native PSA
+    # this cluster's actual workload-hardening layer, so without this rule any
+    # future app opts out of that layer with the same one-line registry edit
+    # that currently writes `baseline` -- the one silent bypass in the set.
+    #
+    # Two namespaces legitimately need `privileged` and are excluded by name:
+    #   longhorn-system   Terraform-created (40-kube-networking/longhorn.tf);
+    #                     the storage engine needs hostPath and privileged
+    #                     containers.
+    #   monitoring-system Registry-created, owned by node-exporter; node agents
+    #                     only (node-exporter, alloy-logs) with hostNetwork/
+    #                     hostPID/hostPath. PSA enforcement is namespace-wide,
+    #                     which is exactly why that split namespace exists.
+    # Adding to this list is a deliberate act with a diff, which is the point.
+    # The API-server namespaces are excluded again here: kube-system is
+    # effectively privileged and `default` carries no label at all, and rule 1
+    # above already covers presence.
+    - name: restrict-psa-enforce-level
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+      exclude:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              names:
+                - default
+                - kube-node-lease
+                - kube-public
+                - kube-system
+                - longhorn-system
+                - monitoring-system
+      validate:
+        failureAction: Enforce
+        message: >-
+          Namespace pod-security.kubernetes.io/enforce must be 'baseline' or
+          'restricted'. 'privileged' opts the namespace out of this cluster's
+          workload-hardening layer and is allowed only for longhorn-system and
+          monitoring-system.
+        pattern:
+          metadata:
+            # Equality anchors on both levels: check the value only where the
+            # label exists. Without them a namespace with no labels at all
+            # fails both rules and lands in the reports twice, the second time
+            # under a message about a value it does not have -- and the map
+            # itself has to be anchored too, not just the key, or the pattern
+            # fails one level up at /metadata/labels/ before it ever reaches
+            # the key. Rule 1 above is what requires presence.
+            =(labels):
+              =(pod-security.kubernetes.io/enforce): "baseline | restricted"
+---
+# Image supply chain. The allow-list is deliberately short -- it is exactly
+# the set of registries this cluster pulls from today, verified by rendering
+# every GitOps app plus the Terraform-managed Cilium/cert-manager/Longhorn/
+# Traefik/ArgoCD charts and reading off the image refs:
+#
+#   docker.io          Traefik, Longhorn, Grafana/Loki/Tempo/Alloy, cloudflared
+#   ghcr.io            External Secrets, Multus, whereabouts, dex, certgen
+#   quay.io            Cilium, cert-manager, ArgoCD, Prometheus/Alertmanager
+#   registry.k8s.io    kube-state-metrics, the Talos static control-plane pods
+#   reg.kyverno.io     Kyverno's own controller images as of the 3.x chart
+#   ecr-public.aws.com ArgoCD's redis-ha + haproxy subcharts (argo-helm moved
+#                      the Docker official images off Docker Hub to dodge its
+#                      rate limits; overriding them back is the alternative)
+#
+# Adding a registry here is cheaper than being wrong about one: these rules are
+# Enforce and fail-closed, so a miss does not flag a pod, it refuses to admit
+# it -- and for an already-running workload the refusal only lands on the next
+# restart, long after the merge that caused it.
+#
+# Uses Kyverno's built-in `images` context, which normalizes a bare image ref
+# (e.g. "cloudflare/cloudflared:tag", no explicit registry host -- this is
+# what kubernetes/apps/edge/cloudflared/values.yaml actually uses) to its real
+# registry (docker.io) before the check runs, so bare-image refs are not
+# false-flagged as coming from an unknown registry. The registry check is a
+# foreach over the container list rather than a single condition on
+# `images.containers.*.registry` so that a pod with no initContainers or no
+# ephemeralContainers skips the rule instead of failing to resolve the
+# variable -- an unresolved variable is a rule error, and fail-closed that
+# would deny the pod.
+#
+# The kyverno namespace is excluded from all three rules, so that Kyverno's own
+# install/upgrade can never deadlock against its own policy. This is load-
+# bearing, not theoretical: at chart 3.8.2 the four controller Deployments and
+# the hook Jobs are all pinned to the appVersion, but the chart also ships five
+# `helm.sh/hook: test` Pods running ghcr.io/kyverno/readiness-checker:latest,
+# which disallow-latest-tag would reject. Kyverno's default resourceFilters
+# drop [*/*,kyverno,*] cluster-wide as well, so this exclusion is belt-and-
+# braces on top of that -- stated in the policy rather than left resting on a
+# ConfigMap default.
+#
+# scripts/check_cluster_policy.py does not mirror the namespace exclusion. It
+# skips `helm.sh/hook: test` resources across every chart instead -- ArgoCD
+# never applies a test hook, so those Pods reach the cluster only via a manual
+# `helm test`. That keeps the images ArgoCD really does apply from this chart
+# under CI, where mirroring the whole-namespace exclusion would have hidden
+# them.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: image-supply-chain
+  annotations:
+    policies.kyverno.io/description: >-
+      Container images must come from an allow-listed registry and carry an
+      explicit, immutable tag or digest.
+spec:
+  background: true
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kyverno
+      validate:
+        failureAction: Enforce
+        message: "An explicit image tag or digest is required."
+        foreach:
+          - list: "request.object.spec.containers"
+            pattern:
+              image: "*:* | *@sha256:*"
+          - list: "request.object.spec.initContainers"
+            pattern:
+              image: "*:* | *@sha256:*"
+          - list: "request.object.spec.ephemeralContainers"
+            pattern:
+              image: "*:* | *@sha256:*"
+
+    - name: disallow-latest-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kyverno
+      validate:
+        failureAction: Enforce
+        message: >-
+          Using the mutable ':latest' image tag is not allowed -- pin an
+          explicit version.
+        foreach:
+          - list: "request.object.spec.containers"
+            pattern:
+              image: "!*:latest"
+          - list: "request.object.spec.initContainers"
+            pattern:
+              image: "!*:latest"
+          - list: "request.object.spec.ephemeralContainers"
+            pattern:
+              image: "!*:latest"
+
+    - name: restrict-image-registries
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kyverno
+      validate:
+        failureAction: Enforce
+        message: >-
+          Container images must come from an allow-listed registry: docker.io,
+          ghcr.io, quay.io, registry.k8s.io, reg.kyverno.io, or
+          ecr-public.aws.com.
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ images.containers.\"{{ element.name }}\".registry }}"
+                    operator: AnyNotIn
+                    value:
+                      - docker.io
+                      - ghcr.io
+                      - quay.io
+                      - registry.k8s.io
+                      - reg.kyverno.io
+                      - ecr-public.aws.com
+          - list: "request.object.spec.initContainers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ images.initContainers.\"{{ element.name }}\".registry }}"
+                    operator: AnyNotIn
+                    value:
+                      - docker.io
+                      - ghcr.io
+                      - quay.io
+                      - registry.k8s.io
+                      - reg.kyverno.io
+                      - ecr-public.aws.com
+          - list: "request.object.spec.ephemeralContainers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ images.ephemeralContainers.\"{{ element.name }}\".registry }}"
+                    operator: AnyNotIn
+                    value:
+                      - docker.io
+                      - ghcr.io
+                      - quay.io
+                      - registry.k8s.io
+                      - reg.kyverno.io
+                      - ecr-public.aws.com
+---
+# RBAC hardening. One binding in this cluster is grandfathered: Longhorn's
+# chart (40-kube-networking) creates the ClusterRoleBinding
+# longhorn-support-bundle -> cluster-admin for its support-bundle collector,
+# unconditionally -- the template carries no guard and no values flag turns it
+# off. It is excluded by name below. Nothing under kubernetes/apps binds
+# cluster-admin, so for the GitOps side this rule still grandfathers nothing.
+#
+# Scope, stated plainly so it is not over-trusted: this matches the ClusterRole
+# *named* cluster-admin. A ClusterRole carrying the same */*/* rules under any
+# other name is not restricted by it, and neither is an aggregation label that
+# pulls those rules into an existing role. It is a guard against the lazy grant
+# -- the one-line "bind cluster-admin and move on" that would otherwise never
+# be reviewed -- not a privilege-escalation control.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: rbac-hardening
+  annotations:
+    policies.kyverno.io/description: >-
+      Restricts new bindings to the cluster-admin ClusterRole.
+spec:
+  background: true
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    # roleRef.kind is checked too: without it a RoleBinding to a namespaced
+    # Role that merely happens to be named "cluster-admin" would be denied.
+    #
+    # Two ClusterRoleBindings are excluded by name:
+    #   cluster-admin           the built-in -> system:masters binding. It ships
+    #                           with the API server and cannot be dropped, so
+    #                           matching it would only park a permanent
+    #                           violation in the reports. Its name is already
+    #                           taken cluster-wide, so this is not a path anyone
+    #                           can recreate.
+    #   longhorn-support-bundle created unconditionally by the Longhorn chart
+    #                           (see the note above this policy). Excluding it
+    #                           by name is the only option available: a
+    #                           ClusterRoleBinding is cluster-scoped, so an
+    #                           exclude on the longhorn-system namespace would
+    #                           never match it. The trade-off is real -- the
+    #                           name becomes a bypass for anyone who can create
+    #                           a ClusterRoleBinding -- and is accepted over
+    #                           the alternative, which is every future
+    #                           `terraform apply` on 40-kube-networking that
+    #                           touches the Longhorn release being denied
+    #                           fail-closed. Drop this entry if Longhorn ever
+    #                           gains a flag to disable the binding.
+    - name: no-new-cluster-admin-binding
+      match:
+        any:
+          - resources:
+              kinds:
+                - ClusterRoleBinding
+                - RoleBinding
+      exclude:
+        any:
+          - resources:
+              kinds:
+                - ClusterRoleBinding
+              names:
+                - cluster-admin
+                - longhorn-support-bundle
+      validate:
+        failureAction: Enforce
+        message: >-
+          New bindings to the 'cluster-admin' ClusterRole are not permitted;
+          grant a narrower Role/ClusterRole instead.
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.roleRef.kind }}"
+                operator: Equals
+                value: ClusterRole
+              - key: "{{ request.object.roleRef.name }}"
+                operator: Equals
+                value: cluster-admin
+---
+# Workload best practices -- report-only, and the only policy in this file that
+# is not fail-closed. See the failurePolicy paragraph in the file header for
+# why these two rules live in their own policy rather than as two more rules
+# above: failurePolicy is policy-level, and an Audit rule has no business
+# extending the blast radius of a Kyverno outage.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: workload-best-practices
+  annotations:
+    policies.kyverno.io/description: >-
+      Reports containers with no probe defined, and containers missing
+      CPU/memory requests or a memory limit. Audit only.
+spec:
+  background: true
+  webhookConfiguration:
+    failurePolicy: Ignore
+  rules:
+    # Only spec.containers: Kubernetes does not run probes on regular init
+    # containers at all (sidecar/restartPolicy:Always init containers aside),
+    # so requiring one there would report a violation that cannot be fixed.
+    - name: require-probes
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        failureAction: Audit
+        message: >-
+          Every container should define a liveness, readiness or startup probe.
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                all:
+                  - key: livenessProbe
+                    operator: AllNotIn
+                    value: "{{ element.keys(@) }}"
+                  - key: readinessProbe
+                    operator: AllNotIn
+                    value: "{{ element.keys(@) }}"
+                  - key: startupProbe
+                    operator: AllNotIn
+                    value: "{{ element.keys(@) }}"
+
+    # No CPU limit is required, deliberately: a CPU limit throttles rather than
+    # protects, and the requests are what the scheduler and the OOM-kill
+    # ranking actually use. A memory limit is required because memory is the
+    # non-compressible resource -- without one a leaking container takes the
+    # node with it.
+    - name: require-requests-and-memory-limit
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        failureAction: Audit
+        message: >-
+          CPU and memory resource requests and a memory limit are required for
+          all containers.
+        foreach:
+          - list: "request.object.spec.containers"
+            pattern:
+              resources:
+                requests:
+                  cpu: "?*"
+                  memory: "?*"
+                limits:
+                  memory: "?*"
+          - list: "request.object.spec.initContainers"
+            pattern:
+              resources:
+                requests:
+                  cpu: "?*"
+                  memory: "?*"
+                limits:
+                  memory: "?*"
+          - list: "request.object.spec.ephemeralContainers"
+            pattern:
+              resources:
+                requests:
+                  cpu: "?*"
+                  memory: "?*"
+                limits:
+                  memory: "?*"

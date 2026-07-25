@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kyverno-monitoring
+description: ServiceMonitor + PrometheusRule for the Kyverno controllers -- split out of the kyverno app so the monitoring.coreos.com CRDs it needs exist by the time it syncs. Plain templates, no upstream chart.
+type: application
+version: 0.1.0

@@ -1,0 +1,4 @@
+# Output of `python scripts/check_cluster_policy.py --dump rendered` -- the
+# rendered manifests the Kyverno CLI pass evaluates in CI. Regenerated on every
+# run, never committed.
+/rendered/

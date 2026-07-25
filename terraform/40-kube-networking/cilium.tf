@@ -41,15 +41,33 @@ resource "helm_release" "cilium" {
     # raised client rate limit is the documented prerequisite for the leases).
     l2announcements    = { enabled = true }
     k8sClientRateLimit = { qps = 20, burst = 40 }
+
+    # The chart creates a `cilium-secrets` Namespace of its own
+    # (tls.secretsNamespace.create defaults true) to hold TLS material for
+    # CiliumEnvoyConfig. Nothing schedules there, so baseline matches the rest
+    # of the cluster. The label is not optional: kyverno-policies'
+    # require-namespace-psa-label denies a namespace with no enforce label on
+    # UPDATE as well as CREATE, so without it any later chart bump that touches
+    # this object is refused fail-closed and the apply fails at admission.
+    secretsNamespaceLabels = {
+      "pod-security.kubernetes.io/enforce" = "baseline"
+    }
   })]
 }
 
 # LoadBalancer pool per allocations.md: 10.1.11.50 - 10.1.11.249 on VLAN 11.
+#
+# cilium.io/v2, not v2alpha1: this CRD was promoted to v2 in Cilium 1.16 and the
+# v2alpha1 version was dropped in 1.18 (v1.19.6 ships only
+# crds/v2/ciliumloadbalancerippools.yaml). The L2 announcement policy below is
+# deliberately still v2alpha1 -- it has not been promoted -- so the two api
+# versions differing here is correct, not an oversight. Re-check both on a
+# Cilium major bump.
 resource "kubectl_manifest" "lb_pool" {
   depends_on = [helm_release.cilium]
 
   yaml_body = yamlencode({
-    apiVersion = "cilium.io/v2alpha1"
+    apiVersion = "cilium.io/v2"
     kind       = "CiliumLoadBalancerIPPool"
     metadata   = { name = "vlan11-pool" }
     spec = {
@@ -60,6 +78,9 @@ resource "kubectl_manifest" "lb_pool" {
 
 # Announce LB IPs on eth0 (VLAN 11) only. eth1 is the VLAN 12 storage island
 # and must never answer ARP for edge addresses.
+#
+# Still cilium.io/v2alpha1 in 1.19 -- unlike the pool above, this kind has not
+# been promoted. Do not "align" the two.
 resource "kubectl_manifest" "l2_announcements" {
   depends_on = [helm_release.cilium]
 

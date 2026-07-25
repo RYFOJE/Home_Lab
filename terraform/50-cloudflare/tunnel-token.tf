@@ -1,5 +1,5 @@
 # The tunnel token flows to the in-cluster cloudflared workload
-# (kubernetes/apps/cloudflared, deployed by ArgoCD) through the standard ESO
+# (kubernetes/apps/edge/cloudflared, deployed by ArgoCD) through the standard ESO
 # path: Terraform writes it to Key Vault under the cloudflared namespace
 # prefix, and the app's ExternalSecret syncs it in. This is the only secret
 # Terraform WRITES to the vault -- everything else it only reads.

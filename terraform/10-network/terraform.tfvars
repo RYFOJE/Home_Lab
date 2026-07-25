@@ -189,6 +189,26 @@ firewall_rules = {
     dst_address = "10.1.11.10"
     dst_port    = "6443"
   }
+  "FW-003-talos" = {
+    # Second clause of doc rule FW-003 (one doc ID, two entries -- same
+    # pattern as FW-015/FW-015-quic): the Talos machine API on the nodes
+    # themselves, not the kube API on the VIP. 30-talos drives the talos
+    # provider at `endpoints = local.node_ips` (tcp 50000 per node), so
+    # WITHOUT this rule the FW-900 default-deny drops every apply, plan and
+    # `talosctl` call made from VLAN 10 -- i.e. the whole layer, and with it
+    # any rebuild, is unreachable from the only network allowed to administer
+    # it. Nothing earlier in the chain matches this flow (FW-004 is tcp
+    # 80/443, FW-014 is dst-port-scoped), so index 2021 is safe despite
+    # sitting out of doc order -- same as FW-015-quic at 2017.
+    name                  = "admin-to-talos-api"
+    action                = "accept"
+    ruleset               = "LAN_IN"
+    rule_index            = 2021
+    protocol              = "tcp"
+    src_address           = "10.0.10.0/24"
+    dst_address_group_key = "k8s_nodes"
+    dst_port              = "50000"
+  }
   "FW-004" = {
     name        = "admin-to-ingress-and-apps"
     action      = "accept"

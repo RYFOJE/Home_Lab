@@ -1,0 +1,28 @@
+# One ServiceMonitor for all four Kyverno controllers instead of the upstream
+# chart's four (kubernetes/apps/security/kyverno/values.yaml explains why they are not
+# rendered there). The chart gives every controller a <name>-metrics Service
+# labelled app.kubernetes.io/part-of: kyverno with a port named metrics-port,
+# so a single selector covers them; the two non-metrics Services (kyverno-svc,
+# kyverno-cleanup-controller) carry the same label but no such port, and a
+# selected Service with no matching port name yields no scrape target. The
+# per-controller job label still comes from the Service name.
+#
+# Selecting on part-of rather than the chart's component/instance pair: instance
+# is app.kubernetes.io/instance, which is also ArgoCD's tracking label, so it is
+# owned by two things at once. part-of is set unconditionally by the chart and
+# by nothing else.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kyverno
+spec:
+  namespaceSelector:
+    matchNames:
+      - kyverno
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: kyverno
+  endpoints:
+    - port: metrics-port
+      interval: 30s
+      scrapeTimeout: 25s

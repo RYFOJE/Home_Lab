@@ -1,0 +1,37 @@
+# Policies live in kubernetes/apps/security/cluster-secrets (Key Vault isolation) and
+# kubernetes/apps/security/kyverno-policies (general hardening) -- this chart is just
+# the engine.
+#
+# The chart's serviceMonitor.* flags stay off: this app is wave -2, and the
+# monitoring.coreos.com CRDs only arrive with kube-prometheus-stack at wave 0,
+# so a ServiceMonitor rendered here fails to apply on a fresh cluster and
+# stalls the root app-of-apps before the wave that would install the CRD.
+# kubernetes/apps/monitoring/kyverno-monitoring carries them instead, at wave 1. The
+# per-controller *-metrics Services are created by the chart either way.
+kyverno:
+  admissionController:
+    # 2 replicas: chart defaults auto-enable a PodDisruptionBudget
+    # (minAvailable: 1) and spread pods across nodes via soft anti-affinity.
+    # Every *enforcing* ClusterPolicy in this cluster pins
+    # spec.webhookConfiguration.failurePolicy: Fail (fail-closed), so a single
+    # admission-controller pod would make a routine restart block all cluster
+    # admission until it came back. The one report-only policy
+    # (workload-best-practices) pins Ignore instead and is not part of that
+    # blast radius -- it stops reporting during an outage rather than blocking.
+    replicas: 2
+
+  # The chart's own Grafana dashboard for the metrics kyverno-monitoring's
+  # ServiceMonitor scrapes (admission review latency, policy results by
+  # policy/rule/result, controller queue depth). Renders as a plain ConfigMap
+  # of dashboard JSON labelled grafana_dashboard: "1" -- no CRD, unlike the
+  # serviceMonitor.* flags above, so wave -2 is safe for it and it does not
+  # need to move to kyverno-monitoring. It lands in this app's own namespace
+  # (kyverno); kube-prometheus-stack's Grafana sidecar defaults to
+  # sidecar.dashboards.searchNamespace: ALL with exactly that label, so it is
+  # picked up across namespaces the same way ServiceMonitors and
+  # PrometheusRules already are (kubernetes/apps/monitoring/
+  # kube-prometheus-stack/values.yaml, *SelectorNilUsesHelmValues: false).
+  # Sourced from the chart rather than vendored so a chart bump updates the
+  # dashboard with the metrics it describes.
+  grafana:
+    enabled: true

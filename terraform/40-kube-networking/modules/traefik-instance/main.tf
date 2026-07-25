@@ -16,7 +16,14 @@ locals {
 
 resource "kubernetes_namespace" "this" {
   metadata {
-    name = local.name # baseline PSA; Traefik is non-root on 8000/8443
+    name = local.name
+    # Baseline PSA; Traefik is non-root on 8000/8443. Declared explicitly
+    # because kyverno-policies' require-namespace-psa-label denies any
+    # namespace without an enforce label -- on CREATE and on UPDATE, so an
+    # unlabelled namespace would be frozen against future Terraform edits.
+    labels = {
+      "pod-security.kubernetes.io/enforce" = "baseline"
+    }
   }
 }
 

@@ -27,7 +27,7 @@ kube-prometheus-stack:
 
   # node-exporter needs hostNetwork/hostPID/hostPath and therefore runs as a
   # standalone app in the privileged monitoring-system namespace
-  # (kubernetes/apps/node-exporter) -- this namespace stays PSA baseline.
+  # (kubernetes/apps/monitoring/node-exporter) -- this namespace stays PSA baseline.
   nodeExporter:
     enabled: false
 

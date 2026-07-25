@@ -6,9 +6,9 @@ this repo (README rule; the public domain name counts). Every layer therefore re
 `az login` before `terraform plan`.
 
 In-cluster secrets are the exception to the Terraform path: they are pulled from the same
-vault by External Secrets Operator (`kubernetes/apps/external-secrets`) through the single
+vault by External Secrets Operator (`kubernetes/apps/security/external-secrets`) through the single
 `azure-kv` ClusterSecretStore. Those keys are namespaced — named `<namespace>--<name>`
-(double dash) — and a Kyverno policy (`kubernetes/apps/cluster-secrets`) refuses any
+(double dash) — and a Kyverno policy (`kubernetes/apps/security/cluster-secrets`) refuses any
 `ExternalSecret` whose `remoteRef.key` does not start with its own namespace, so a
 namespace cannot read another's secrets (`programming/gitops_apps.md`). The three secrets
 consumed directly by Terraform to bootstrap that path (below) are unprefixed.
@@ -39,6 +39,8 @@ az keyvault secret set --vault-name rj-london --name <name> --value <value>
 | `monitoring--grafana-admin-password` | ESO (`kube-prometheus-stack`) | Grafana UI admin password. Synced by ESO into the `grafana-admin` Secret in `monitoring`; consumed via `grafana.admin.existingSecret` |
 | `monitoring--discord-webhook-url` | ESO (`kube-prometheus-stack`) | Discord webhook Alertmanager delivers alerts to. Synced by ESO into the `alertmanager-discord` Secret in `monitoring`, referenced by `webhook_url_file` |
 | `cloudflared--tunnel-token` | ESO (`cloudflared`) | Cloudflare Tunnel token. The one secret Terraform **writes** (50-cloudflare `tunnel-token.tf`) rather than reads — the tunnel is a Terraform resource, so the token cannot pre-exist in the vault. Synced by ESO into the `cloudflared-token` Secret; rotation requires a `rollout restart` of the Deployment (pods read `TUNNEL_TOKEN` at start) |
+| `talos-talosconfig` | nothing (break-glass) | Client config for `talosctl` — node-level control of all three machines. **Written**, never read: 30-talos `kv.tf` publishes it so the loss of `30-talos.tfstate` does not also cost admin access to a live cluster (`infrastructure/disaster_recovery.md`). Retrieve with `az keyvault secret show` |
+| `talos-kubeconfig` | nothing (break-glass) | cluster-admin kubeconfig for the kube API. Same handling and same rationale as `talos-talosconfig`. Downstream layers still consume the kubeconfig via `terraform_remote_state`, not from here |
 
 WLAN passphrase names follow the pattern `wlan-passphrase-<wlan key>` with underscores in
 the `wlan_configs` key replaced by dashes (`10-network/main.tf`); adding an SSID means
@@ -46,7 +48,12 @@ adding a matching secret.
 
 `30-talos` reads no Key Vault secrets — its credentials (Talos machine secrets,
 kubeconfig) are generated into Terraform state and passed between layers via
-`terraform_remote_state`.
+`terraform_remote_state`. It is the only layer that writes to the vault without reading
+from it: `talos-talosconfig` and `talos-kubeconfig` above are break-glass copies, so the
+one layer whose state is unrecoverable is not also the one layer whose credentials are.
+The machine secrets themselves are deliberately **not** copied — they are the cluster's
+root of trust, and a second copy is a second thing to compromise for no recovery benefit
+(holding them without the state file still does not let Terraform manage the cluster).
 
 Adding an in-cluster secret for an app: create the Key Vault secret as
 `<namespace>--<name>`, then add an `ExternalSecret` to that app referencing `key:

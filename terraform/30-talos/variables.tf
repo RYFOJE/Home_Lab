@@ -37,3 +37,13 @@ variable "install_disk" {
   description = "Disk Talos installs to. Matches the virtio0 disk from 20-proxmox (/dev/vda)."
   type        = string
 }
+
+variable "key_vault_name" {
+  description = "Azure Key Vault the admin-access copies of talosconfig/kubeconfig are written to (documentation/infrastructure/disaster_recovery.md). This layer reads no secrets -- it only writes."
+  type        = string
+}
+
+variable "key_vault_resource_group_name" {
+  description = "Resource group holding key_vault_name"
+  type        = string
+}

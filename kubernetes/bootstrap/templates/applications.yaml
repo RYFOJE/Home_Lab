@@ -11,11 +11,15 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: default
+  # AppProject created by terraform/60-argo-cd/gitops.tf, not by this chart --
+  # a boundary this chart could rewrite would not be one. It closes the
+  # cluster-scoped kinds an app may create; namespaces stay open so adding an
+  # app is still one directory plus one registry entry.
+  project: homelab
   source:
     repoURL: {{ $.Values.repoURL }}
     targetRevision: {{ $.Values.revision }}
-    path: kubernetes/apps/{{ .name }}
+    path: kubernetes/apps/{{ .group }}/{{ .name }}
     {{- if or .needsDomain .needsTenant .needsVaultUrl }}
     helm:
       parameters:

@@ -78,12 +78,22 @@ rules:
     category: required
     action: allow
     source: VLAN 10 (10.0.10.0/24)
-    destination: 10.1.11.10
+    destination: [10.1.11.10, 10.1.11.11, 10.1.11.12, 10.1.11.13]
     protocol: [tcp]
-    ports: [6443]
+    ports: [6443, 50000]
     rationale: >
-      kubectl / Kubernetes API access to the Talos-native control-plane VIP from a management
-      workstation or jump host sitting on VLAN 10 (wired or the home-mgmt SSID).
+      The two administrative control-plane APIs, both reachable only from VLAN 10 (wired or
+      the home-mgmt SSID). tcp 6443: kubectl / Kubernetes API against the Talos-native
+      control-plane VIP. tcp 50000: the Talos machine API on each node - terraform/30-talos
+      points the talos provider at the node IPs directly (`endpoints = local.node_ips`), not
+      at the VIP, so bootstrap, every subsequent apply, and `talosctl` all need this port
+      open per node. Without it the FW-900 default-deny makes 30-talos - and therefore any
+      cluster rebuild - unreachable from the only network permitted to administer it.
+      Implemented as two tfvars entries, FW-003 (tcp 6443 to the VIP, index 2003) and
+      FW-003-talos (tcp 50000 to the k8s-node-ips group, index 2021) - same one-doc-ID
+      pattern as FW-015. The Talos API is deliberately NOT exposed to VLAN 13: it is full
+      node-level control, a strictly higher privilege than the kube API reachable there via
+      FW-010.
 
   - id: FW-004
     name: admin-to-ingress-and-apps

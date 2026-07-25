@@ -1,5 +1,5 @@
 # App registry for the root app-of-apps (documentation/programming/gitops_apps.md).
-# Adding an app = a new directory under kubernetes/apps/<name>/ plus one entry here.
+# Adding an app = a new directory under kubernetes/apps/<group>/<name>/ plus one entry here.
 #
 # domain, tenantId, vaultUrl and edgeMode are injected by the Terraform-created
 # root Application (terraform/60-argo-cd/gitops.tf) -- never commit real
@@ -14,7 +14,8 @@ repoURL: https://github.com/RYFOJE/Home_Lab.git
 revision: main
 
 # Fields per entry:
-#   name             directory under kubernetes/apps/ and the Application name
+#   name             directory under kubernetes/apps/<group>/ and the Application name
+#   group            subfolder under kubernetes/apps/ (security, monitoring, edge, ...)
 #   namespace        destination namespace
 #   wave             argocd.argoproj.io/sync-wave ordering (lowest first)
 #   needsDomain      forward the domain as helm parameter global.domain
@@ -27,25 +28,47 @@ revision: main
 #   extraSyncOptions appended to the default syncOptions
 apps:
   # -- wave -2: secret machinery (operator + policy engine + their CRDs) --
+  # No namespaceLabels: the external-secrets namespace is Terraform-owned
+  # (60-argo-cd/gitops.tf sets the PSA label there). kubernetes_namespace
+  # replaces the whole labels map, so an ArgoCD-managed label would be
+  # stripped on every apply and healed back.
   - name: external-secrets
+    group: security
     namespace: external-secrets
     wave: "-2"
     createNamespace: true
+    extraSyncOptions:
+      # secretstores / clustersecretstores exceed the client-side
+      # last-applied-configuration annotation limit (~349 KB each vs 256 KB).
+      - ServerSideApply=true
   - name: kyverno
+    group: security
     namespace: kyverno
     wave: "-2"
     createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: baseline
+    extraSyncOptions:
+      # policies / clusterpolicies are ~652 KB each -- same limit as above.
+      # Both these apps are wave -2, so a failure here stalls every later wave.
+      - ServerSideApply=true
 
-  # -- wave -1: the single store + the isolation policies --
+  # -- wave -1: the single store + the isolation policies + general hardening --
   - name: cluster-secrets
+    group: security
     namespace: external-secrets
     wave: "-1"
     needsTenant: true
     needsVaultUrl: true
+  - name: kyverno-policies
+    group: security
+    namespace: kyverno
+    wave: "-1"
 
   # -- wave 0: edge. Only exists in tunnel mode (edge_mode, 10-network);
   #    the tunnel itself and its token are 50-cloudflare's. --
   - name: cloudflared
+    group: edge
     namespace: cloudflared
     wave: "0"
     onlyEdgeMode: tunnel
@@ -56,6 +79,7 @@ apps:
   # -- wave 0+: observability. kube-prometheus-stack owns the monitoring
   #    namespace; node-exporter owns monitoring-system. --
   - name: kube-prometheus-stack
+    group: monitoring
     namespace: monitoring
     wave: "0"
     needsDomain: true
@@ -67,20 +91,35 @@ apps:
       # last-applied-configuration annotation size limit.
       - ServerSideApply=true
   - name: loki
+    group: monitoring
     namespace: monitoring
     wave: "1"
   - name: tempo
+    group: monitoring
     namespace: monitoring
     wave: "1"
   - name: node-exporter
+    group: monitoring
     namespace: monitoring-system
     wave: "1"
     createNamespace: true
     namespaceLabels:
       pod-security.kubernetes.io/enforce: privileged
   - name: alloy-gateway
+    group: monitoring
     namespace: monitoring
     wave: "2"
   - name: alloy-logs
+    group: monitoring
     namespace: monitoring-system
     wave: "2"
+
+  # Kyverno's ServiceMonitor + PrometheusRule, split out of the wave -2
+  # kyverno app: they are monitoring.coreos.com kinds, whose CRDs arrive with
+  # kube-prometheus-stack at wave 0. Rendered at wave -2 they fail to apply on
+  # a fresh cluster and stall the root app before the CRDs ever install.
+  # Namespace kyverno, but owned by the kyverno app -- no createNamespace here.
+  - name: kyverno-monitoring
+    group: monitoring
+    namespace: kyverno
+    wave: "1"

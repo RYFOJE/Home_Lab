@@ -58,7 +58,9 @@ provider "kubernetes" {
 }
 
 provider "helm" {
-  kubernetes {
+  # Attribute, not a block: the helm provider was rewritten on the plugin
+  # framework in v3 and `kubernetes` became a nested attribute.
+  kubernetes = {
     host                   = local.kube_host
     cluster_ca_certificate = local.kube_ca_certificate
     client_certificate     = local.kube_client_cert
