@@ -183,8 +183,10 @@ spec:
           annotations:
             summary: No available Traefik pods in {{`{{ $labels.namespace }}`}}.
             description: >-
-              That entry point is serving nothing. For traefik-external this is
-              every published application, LAN and internet.
+              That entry point is serving nothing. traefik-internal is every
+              LAN request, both ingress classes, because internal DNS resolves
+              the whole domain there. traefik-external is every request from
+              the internet, plus the LAN half that falls through to it.
         - alert: TraefikInstanceDegraded
           expr: >-
             kube_deployment_status_replicas_available{namespace=~"traefik-external|traefik-internal"}

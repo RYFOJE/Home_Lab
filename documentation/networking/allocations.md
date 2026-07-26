@@ -33,7 +33,7 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 | k8s-node-3 (eth0) | VM - Talos Node | VLAN 11 | Project 1 | 10.1.11.13 | Combined control-plane + worker; runs on pve3 |
 | LoadBalancer IP Pool | Cilium LB IPAM | VLAN 11 | Project 1 | 10.1.11.50 - 10.1.11.249 | Pool for LoadBalancer-type Services, announced via Cilium L2 on eth0 only; 200 addresses |
 | traefik-external | LoadBalancer Service | VLAN 11 | Project 1 | 10.1.11.50 | Public ingress running in-cluster; pinned first pool IP; Cloudflare Tunnel origin (sole WAN DNAT target 80/443 in dnat mode only). See `wifi_and_isolation.md` |
-| traefik-internal | LoadBalancer Service | VLAN 11 | Project 1 | 10.1.11.51 | LAN-only ingress for internal apps; never port-forwarded. See `wifi_and_isolation.md` |
+| traefik-internal | LoadBalancer Service | VLAN 11 | Project 1 | 10.1.11.51 | LAN-only ingress; never port-forwarded. The internal DNS zone points the whole public domain here, so it is the LAN's entry point for both classes. See `wifi_and_isolation.md` |
 | k8s-node-1 (eth1) | VM - Storage NIC | VLAN 12 | Project 1 | 10.1.12.11 | Dedicated Longhorn interface; same VM as k8s-node-1. **No gateway configured** (see design notes) |
 | k8s-node-2 (eth1) | VM - Storage NIC | VLAN 12 | Project 1 | 10.1.12.12 | Dedicated Longhorn interface; same VM as k8s-node-2. **No gateway configured** (see design notes) |
 | k8s-node-3 (eth1) | VM - Storage NIC | VLAN 12 | Project 1 | 10.1.12.13 | Dedicated Longhorn interface; same VM as k8s-node-3. **No gateway configured** (see design notes) |
@@ -121,12 +121,15 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
   Root domain is `home.arpa` (RFC 8375) for infra hostnames; anything published via ingress
   uses a real owned domain, since `home.arpa` can't get a publicly-trusted TLS cert.
   Non-`home.arpa` queries are forwarded upstream to a public resolver - except the public
-  domain itself, which Technitium also hosts as an internal zone (split-horizon): a
-  wildcard record → 10.1.11.50 (traefik-external) plus explicit records → 10.1.11.51 for
-  internal-only hostnames. LAN clients reach published apps directly on VLAN 11 without
-  hairpinning through the WAN. Public DNS (Cloudflare): in tunnel mode, Terraform-managed
-  apex + wildcard proxied CNAMEs → the tunnel (`terraform/50-cloudflare`); in dnat mode,
-  manual explicit records at the WAN IP for published apps only.
+  domain itself, which Technitium also hosts as an internal zone (split-horizon). That zone
+  is two static records - apex and wildcard, both → 10.1.11.51 (traefik-internal) - and no
+  per-app record ever. The apex entry is not redundant: a wildcard never matches the zone
+  apex. Both ingress classes are served from that one address; traefik-internal forwards
+  what it holds no route for to traefik-external (`programming/publishing_apps.md`). LAN
+  clients reach published apps directly on VLAN 11 without hairpinning through the WAN.
+  Public DNS (Cloudflare): in tunnel mode, Terraform-managed apex + wildcard proxied CNAMEs
+  → the tunnel (`terraform/50-cloudflare`); in dnat mode, manual explicit records at the
+  WAN IP for published apps only.
 - **Backup strategy (PBS + Longhorn split):** PBS backs up VM/CT *system* disks. The k8s VMs'
   Longhorn data disks are **excluded** from PBS backup jobs - Longhorn keeps 3 replicas of every
   volume, so backing up all three VMs whole would store three crash-consistent copies of the

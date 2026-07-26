@@ -7,15 +7,21 @@ it publishes under. Nothing else in the route changes.
 
 | ingressClass | Instance | LB IP | Reachable from |
 |---|---|---|---|
-| `traefik-external` | traefik-external | 10.1.11.50 | Internet (Cloudflare Tunnel; WAN DNAT FW-017 in dnat mode) **and** the LAN |
-| `traefik-internal` | traefik-internal | 10.1.11.51 | LAN only — never port-forwarded |
+| `traefik-external` | traefik-external | 10.1.11.50 | Internet (Cloudflare Tunnel; WAN DNAT FW-017 in dnat mode) **and** the LAN, the latter via the fallback route below |
+| `traefik-internal` | traefik-internal | 10.1.11.51 | LAN only — never port-forwarded. Also the LAN's entry point for every hostname |
 
-`traefik-external` is the internet-facing edge; it is also reachable from the
-LAN, so a public app served through it works identically for local development
-and for external users (split-horizon DNS resolves the same hostname to the LB
-IP on the LAN and to the WAN outside it). `traefik-internal` exists for apps
-that must never be exposed to the internet — there is no DNAT to 10.1.11.51, so
-the isolation is topological, not a per-route setting.
+`traefik-external` is the internet-facing edge. `traefik-internal` exists for
+apps that must never be exposed to the internet — there is no DNAT to
+10.1.11.51 and the tunnel's origin is the external instance, so the isolation
+is topological, not a per-route setting.
+
+Every LAN request lands on `traefik-internal` regardless of class: internal DNS
+resolves the whole public domain to 10.1.11.51 (below). Routes it does not own
+fall through its lowest-priority `lan-fallback` route to `traefik-external`, so
+an external app answers on the same hostname, over the same certificate, from
+the LAN and from the internet. The class still decides exposure — it decides
+which instance holds the route, and only the external one is reachable from
+outside.
 
 Choose exactly one class per route: pick `traefik-external` for anything the
 internet should reach, `traefik-internal` for LAN-only.
@@ -89,19 +95,59 @@ routes only need the HTTPS side.
 
 ## DNS
 
-Terraform provisions the edge; internal hostname records are added out of band
-(see `networking/allocations.md`, Technitium is manual/Ansible):
+**No app needs a DNS record.** Publishing one is the Ingress and nothing else.
 
-- **External app** (`traefik-external`): in tunnel mode no per-app public
-  record is needed — the Terraform-managed wildcard CNAME → the tunnel
-  (`terraform/50-cloudflare`) already covers every hostname. In dnat mode, a
-  manual public record `my-app.<public domain>` → WAN IP. On the LAN, the
-  internal wildcard `*` → 10.1.11.50 in the Technitium zone covers it.
-- **Internal-only app** (`traefik-internal`): an explicit Technitium record
-  `my-app.<public domain>` → 10.1.11.51 (more-specific beats the internal
-  wildcard). Off-LAN the name resolves to the tunnel but the tunnel's origin
-  is `traefik-external`, which carries no route for it — the app stays
-  unreachable from the internet.
+The Technitium internal zone for the public domain is two static records that
+never change as apps come and go (Technitium is manual/Ansible —
+`networking/allocations.md`):
+
+```
+@   A   10.1.11.51
+*   A   10.1.11.51
+```
+
+The apex record is not redundant: a DNS wildcard never matches the zone apex,
+so without it the bare domain fails to resolve on the LAN while working from
+the internet.
+
+Public DNS in tunnel mode is likewise two Terraform-managed records covering
+every hostname — apex and wildcard CNAMEs → the tunnel
+(`terraform/50-cloudflare`). In dnat mode public records are manual, at the WAN
+IP, for published apps only.
+
+An internal-only app therefore resolves publicly and is *reachable* publicly,
+but the tunnel's origin is `traefik-external`, which holds no route for it —
+the request gets a 404 and the app is never reached. That is the containment.
+It also leaks nothing: the wildcard certificate keeps per-host names out of
+certificate-transparency logs, and the wildcard CNAME means public DNS never
+enumerates them.
+
+### The fallback route
+
+`lan-fallback` (an `IngressRoute` plus a `ServersTransport`, both created by
+`terraform/40-kube-networking/traefik.tf`) is what lets one internal address
+serve both classes. It lives in the `traefik-external` namespace but carries
+`traefik-internal`'s ingressClass: the instances watch every namespace and are
+separated by class alone, so the internal instance serves it while the Service
+and transport references stay same-namespace and neither instance needs
+`providers.kubernetesCRD.allowCrossNamespace`.
+
+It matches `HostRegexp` on the public domain at `priority: 1`. Priority `0`
+would be *ignored* — Traefik falls back to rule-length sorting, which ranks a
+long regexp above the `Host()` rules this must never shadow. Real routes sort
+in the 20–40 range, so 1 is unconditionally last.
+
+The second hop is HTTPS to the external instance's Service port 443, with SNI
+pinned to the apex via the `ServersTransport` so the wildcard certificate
+validates with verification left on. It must not use port 80: the global
+`web → websecure` redirect would send the client back to the LAN wildcard and
+loop. The direction is load-bearing in the same way — internal → external only,
+because the reverse would put internal-only routes in the tunnel origin's
+routing table and publish them.
+
+Cost: external apps take one extra in-cluster hop when reached from the LAN,
+and `traefik-internal` becomes the single point of failure for all LAN access
+(three replicas across three nodes, same as the external instance).
 
 Trust-zone model, blast radius, and the reason the split exists are in
 `networking/wifi_and_isolation.md` §4.

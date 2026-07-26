@@ -18,8 +18,8 @@ and traces in one Grafana, alerts to Discord. Deployed via GitOps
 | `infra-monitoring` | `monitoring` | ServiceMonitors and alerts for the six platform components that cannot carry their own — see below |
 
 Grafana is published at `grafana.<domain>` behind `traefik-internal`
-(LAN-only, wildcard cert — `programming/publishing_apps.md`). The Technitium
-record `grafana.<domain>` → 10.1.11.51 is added out of band. Admin login:
+(LAN-only, wildcard cert — `programming/publishing_apps.md`). No DNS record:
+the internal zone's wildcard already resolves there. Admin login:
 Key Vault `monitoring--grafana-admin-password`, synced in by ESO
 (`programming/gitops_apps.md`). Datasources (Prometheus, Loki, Tempo) are
 provisioned; custom dashboards load via the sidecar, which watches every

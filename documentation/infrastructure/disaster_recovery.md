@@ -193,6 +193,12 @@ Each layer is `cd terraform/<layer> && terraform init && terraform apply`.
   40-kube-networking's state. Nothing needs doing — issuance completes unattended once ESO
   syncs. If it has not after ArgoCD is `Synced`/`Healthy`, check the ExternalSecret in
   `cert-manager` before the Certificate.
+
+  In that same window the `lan-fallback` route fails too: its second hop verifies the
+  external instance's certificate against the apex, and a self-signed one does not validate.
+  So LAN access to `traefik-external` apps returns 502 until the wildcard issues, on top of
+  the browser warning internal apps show. Both clear together at wave −1 of step 9, and
+  neither is worth chasing before then.
 - **Step 9** — the PostgreSQL cluster comes back empty. It has no backups (`databases.md`),
   so nothing in this runbook restores it; the apps that depend on it come up against a fresh
   database.

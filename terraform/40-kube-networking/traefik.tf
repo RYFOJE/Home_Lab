@@ -23,6 +23,14 @@ locals {
   ]
 
   traefik_base_values = file("${path.module}/values/traefik.yaml")
+
+  # Literal dots escaped for the Go regexp the fallback route matches on.
+  public_domain_regexp = replace(data.azurerm_key_vault_secret.public_domain.value, ".", "\\.")
+
+  # Named in two objects: the ServersTransport itself and the route's reference
+  # to it. Traefik resolves an unknown transport name at request time, so a
+  # mismatch surfaces as a 500 rather than a failed apply.
+  lan_fallback_transport = "traefik-external-wildcard"
 }
 
 # CRDs as their own release, from the chart Traefik publishes for exactly this.
@@ -94,4 +102,81 @@ module "traefik_internal" {
     kubectl_manifest.letsencrypt_issuer,
     local.priority_classes,
   ]
+}
+
+# LAN fallback. Internal DNS resolves the public domain to one address --
+# 10.1.11.51, a wildcard plus an apex record and nothing else (allocations.md)
+# -- so the internal instance answers for every LAN request and has to serve
+# routes it does not own. This is the lowest-priority route on that instance:
+# anything under the public domain with no route of its own falls through to
+# the external instance, which carries the public apps. Without it, an app
+# published on traefik-external is unreachable from the LAN.
+#
+# Direction is load-bearing. internal -> external only: the reverse would put
+# internal-only routes in the tunnel origin's routing table and publish them.
+#
+# Both objects live in the external namespace; the route names the internal
+# instance's ingressClass. Instances are separated by class alone -- neither
+# restricts providers.kubernetesCRD.namespaces -- so the internal instance
+# still picks the route up, while its Service and ServersTransport references
+# stay same-namespace and no allowCrossNamespace is needed on either instance.
+resource "kubectl_manifest" "lan_fallback_transport" {
+  depends_on = [helm_release.traefik_crds, module.traefik_external]
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata = {
+      name      = local.lan_fallback_transport
+      namespace = module.traefik_external.namespace
+    }
+    spec = {
+      # SNI pinned to the apex so the wildcard cert's apex SAN validates on the
+      # second hop; the cert is publicly trusted, so verification stays on.
+      # Same reasoning as 50-cloudflare's origin_server_name.
+      serverName = data.azurerm_key_vault_secret.public_domain.value
+    }
+  })
+}
+
+resource "kubectl_manifest" "lan_fallback_route" {
+  depends_on = [kubectl_manifest.lan_fallback_transport, module.traefik_internal]
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "lan-fallback"
+      namespace = module.traefik_external.namespace
+    }
+    spec = {
+      # The spec field, not the kubernetes.io/ingress.class annotation: Traefik
+      # reads the annotation only as a deprecated fallback and warns on every
+      # provider refresh when it does.
+      ingressClassName = module.traefik_internal.ingress_class
+      entryPoints      = ["websecure"]
+      routes = [{
+        kind = "Rule"
+        # Scoped to the public domain rather than `.+`: a request carrying an
+        # unrelated Host gets a 404 here instead of being proxied onward.
+        match = "HostRegexp(`^(.+\\.)?${local.public_domain_regexp}$`)"
+        # 1, not 0: priority 0 is ignored and falls back to rule-length
+        # sorting, which would out-rank the Host() rules this must never
+        # shadow. Real routes sort in the 20-40 range.
+        priority = 1
+        services = [{
+          # Service name == namespace for both instances (module naming).
+          # Port 443 is the Service port; the chart maps it to websecure
+          # (container 8443). Never port 80 -- the global web -> websecure
+          # redirect would bounce the client back to the LAN wildcard and loop.
+          name             = module.traefik_external.namespace
+          port             = 443
+          scheme           = "https"
+          serversTransport = local.lan_fallback_transport
+        }]
+      }]
+      # No secretName: the internal instance's default wildcard cert is served.
+      tls = {}
+    }
+  })
 }

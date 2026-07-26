@@ -142,12 +142,21 @@ SNATed to a node address, which is the accepted cost.
 
 | Instance | LB IP | ingressClass | Exposure |
 |---|---|---|---|
-| `traefik-external` | 10.1.11.50 | `traefik-external` | Cloudflare Tunnel origin (dnat fallback: FW-017) |
-| `traefik-internal` | 10.1.11.51 | `traefik-internal` | LAN only - never exposed |
+| `traefik-external` | 10.1.11.50 | `traefik-external` | Cloudflare Tunnel origin (dnat fallback: FW-017); reached from the LAN through the internal instance |
+| `traefik-internal` | 10.1.11.51 | `traefik-internal` | LAN only - never exposed. The LAN's entry point for every hostname |
 
 An app chooses its exposure by the ingressClass it publishes under. Internal-only apps are
 unreachable from the internet by topology - no DNAT to `10.1.11.51` exists - not by
 per-route configuration.
+
+The LAN enters through the internal instance for both classes, because internal DNS
+resolves the whole public domain to `10.1.11.51` (below). A lowest-priority `lan-fallback`
+route on that instance forwards anything it holds no route for to the external instance
+over HTTPS, SNI pinned to the apex. Internal → external only: the reverse direction would
+put internal-only routes in the tunnel origin's routing table and publish them. The cost is
+one extra in-cluster hop for external apps on the LAN, and `traefik-internal` becoming the
+single point of failure for all LAN access - three replicas across three nodes, the same
+posture as the external instance.
 
 Public traffic enters via a Cloudflare Tunnel (tunnel + token: `terraform/50-cloudflare`;
 connector workload: the GitOps app `kubernetes/apps/edge/cloudflared`, deployed only in tunnel
@@ -168,10 +177,11 @@ individual certificate-transparency entries. The external instance trusts client
 headers (`CF-Connecting-IP` / `X-Forwarded-For`) only from the Cloudflare edge ranges and
 the pod CIDR (the cloudflared pod is its direct peer); the internal instance trusts none.
 
-DNS is split-horizon: Technitium hosts an internal zone for the public domain with a
-wildcard record → `10.1.11.50` and explicit records → `10.1.11.51` for internal-only
-hostnames (more-specific beats wildcard). Public DNS (Cloudflare) carries two
-Terraform-managed proxied records in tunnel mode - apex and wildcard CNAMEs →
+DNS is split-horizon, two static records on each side and no per-app record anywhere.
+Technitium hosts an internal zone for the public domain: apex and wildcard → `10.1.11.51`.
+The apex entry is not redundant - a wildcard never matches the zone apex, so without it the
+bare domain resolves from the internet and not from the LAN. Public DNS (Cloudflare)
+carries two Terraform-managed proxied records in tunnel mode - apex and wildcard CNAMEs →
 `<tunnel-id>.cfargotunnel.com` (50-cloudflare); in dnat mode public records are manual
 (the WAN IP is never committed). LAN clients therefore hit the same hostnames and the
 same Traefik routes as internet clients, without hairpinning through the WAN or the
@@ -194,8 +204,29 @@ sequenceDiagram
     P-->>C: response
 ```
 
-LAN clients skip the first hop: split-horizon DNS resolves the hostname straight to the
-LB IP and the same route matching applies.
+LAN clients skip the Cloudflare hops entirely - split-horizon DNS resolves the hostname to
+`10.1.11.51` and the internal instance matches it. An internal-only app is served there
+directly; an external one takes one more hop through `lan-fallback` to the external
+instance, where the same route matching applies as for an internet client.
+
+```mermaid
+sequenceDiagram
+    participant L as LAN client
+    participant I as traefik-internal<br/>LB IP 10.1.11.51
+    participant T as traefik-external Service<br/>(ClusterIP path)
+    participant P as App pod<br/>(overlay 10.1.200.0/22)
+
+    L->>I: https://app.<public domain> (internal zone: * -> 10.1.11.51)
+    Note over I: TLS terminates (wildcard cert)
+    alt route on traefik-internal (internal-only app)
+        I->>P: proxied to backend Service
+    else no route -- lan-fallback, priority 1
+        I->>T: https to :443, SNI = apex, cert verified (wildcard)
+        Note over T: TLS terminates - route matched on Host header
+        T->>P: proxied to backend Service
+    end
+    P-->>L: response
+```
 
 ### Containment
 

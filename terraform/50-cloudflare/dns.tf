@@ -3,7 +3,8 @@
 # Cloudflare flattens the apex CNAME. In dnat mode this layer manages no
 # public DNS -- the records are manual (A records at the WAN IP, which is
 # never committed). Split-horizon for LAN clients is unaffected: Technitium
-# resolves the domain to 10.1.11.50/.51 directly (wifi_and_isolation.md).
+# resolves the domain to traefik-internal (10.1.11.51) directly, which serves
+# both ingress classes (wifi_and_isolation.md).
 
 data "cloudflare_zone" "public" {
   filter = {
