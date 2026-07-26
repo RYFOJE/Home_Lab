@@ -2,7 +2,7 @@
 # Technitium DNS on the two core-infra LXCs. Terraform creates the containers
 # (terraform/20-proxmox/core-infra.tf); this configures what runs inside them.
 # documentation/infrastructure/core_infra.md
-- name: core-infra DNS
+- name: Core-infra DNS
   hosts: core_infra
   gather_facts: false
 
