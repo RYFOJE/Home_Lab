@@ -1,0 +1,28 @@
+---
+# creates: config.sh is the guard. The install directory's layout changes
+# between agent versions; config.sh is the one entry point that does not.
+- name: Unpack the agent
+  ansible.builtin.unarchive:
+    src: "{{ azdo_agent_tarball_url }}"
+    dest: "{{ azdo_agent_home }}"
+    remote_src: true
+    owner: "{{ azdo_agent_user }}"
+    group: "{{ azdo_agent_group }}"
+    creates: "{{ azdo_agent_home }}/config.sh"
+
+- name: Read the installed agent version
+  ansible.builtin.command: "{{ azdo_agent_home }}/bin/Agent.Listener --version"
+  register: azdo_agent_installed
+  changed_when: false
+
+# Azure DevOps upgrades an agent in place when the server requires a newer one,
+# so this trips after a server-driven update. That is the point: it turns a
+# silent in-place rewrite into a diff (documentation/infrastructure/upgrades.md).
+- name: Verify the installed agent matches the pin
+  ansible.builtin.assert:
+    that: azdo_agent_installed.stdout | trim == azdo_agent_version
+    fail_msg: >-
+      Agent {{ azdo_agent_installed.stdout | trim }} is installed,
+      {{ azdo_agent_version }} is pinned. Azure DevOps upgrades agents in place
+      -- repin in roles/azdo_agent/defaults/main.yml
+      (documentation/infrastructure/upgrades.md).

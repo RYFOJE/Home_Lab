@@ -2,3 +2,9 @@
 # Reachable on 53 from 10.0.10.4/.5 under FW-013. Used only for the duration of
 # the run; the play's always-block puts core_infra_resolvers back.
 bootstrap_resolver: 1.1.1.1
+
+# Only the core-infra containers need the swap: they resolve against themselves,
+# so on a new container nothing answers on 53. Every other VLAN 10 guest already
+# points at .4/.5, which are serving -- and FW-013 is scoped to .4/.5, so a swap
+# anywhere else replaces a working resolver with an unreachable one.
+bootstrap_swap_resolver: true

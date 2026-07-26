@@ -1,0 +1,141 @@
+# The identity the Azure DevOps agents authenticate to the kube API as
+# (documentation/infrastructure/azdo_agents.md).
+#
+# It lives in {{ .Values.identityNamespace }}, which is NOT a namespace it can
+# write to. That separation is the point: a credential a compromised pipeline
+# could rewrite is not a constraint on that pipeline. Same reasoning as the
+# external-secrets namespace holding the ESO credential and nothing else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: azdo-deployer
+  namespace: {{ .Values.identityNamespace }}
+---
+# The parent. Children are namespaces carrying home.arpa/parent: {{ .Values.parentNamespace }};
+# they are created by the agents at pipeline time and get their PSA label, their
+# RoleBinding and their LimitRange from files/policies.yaml.
+#
+# The parent deliberately does NOT carry that label itself: the generate rules
+# key off it, and a RoleBinding owned by both this chart and Kyverno would be
+# fought over on every reconcile.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.parentNamespace }}
+  labels:
+    pod-security.kubernetes.io/enforce: {{ .Values.psaEnforce }}
+---
+# Namespaced kinds only, and reached exclusively through RoleBindings -- a
+# ClusterRole referenced by a RoleBinding grants only inside that namespace, so
+# this is a reusable permission set rather than a cluster-wide grant.
+#
+# Not here, each for a reason:
+#   pods/exec, pods/portforward  exec is a lateral move to that pod's identity,
+#                                and every pod under the parent will have one.
+#   roles, rolebindings          a CI identity that can rewrite its own grant is
+#                                not a boundary. Escalation prevention would cap
+#                                it at what it already holds; the shape is still
+#                                wrong.
+#   limitranges, resourcequotas  the memory ceiling is generated, not negotiable.
+#   anything cluster-scoped      see azdo-deployer-namespaces below.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: azdo-deployer
+rules:
+  # Helm keeps release history in a Secret in the release namespace, which is
+  # why secrets carry the write verbs and not just read.
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - secrets
+      - services
+      - serviceaccounts
+      - persistentvolumeclaims
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list, watch]
+  # Deleting a pod is how a stuck rollout is cleared; creating one directly is
+  # not something a pipeline should be doing.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # The CRDs a deployed app can legitimately need. Cluster-scoped kinds are
+  # absent by construction -- a chart shipping its own CRDs cannot be installed
+  # by an agent, which is intended: CRDs are platform-owned and belong in this
+  # repo (documentation/programming/gitops_apps.md).
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares, serverstransports]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [external-secrets.io]
+    resources: [externalsecrets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [keda.sh]
+    resources: [scaledobjects, triggerauthentications]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [servicemonitors, prometheusrules]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+# The parent's own binding. Children get an identical one generated into them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: azdo-deployer
+  namespace: {{ .Values.parentNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: azdo-deployer
+subjects:
+  - kind: ServiceAccount
+    name: azdo-deployer
+    namespace: {{ .Values.identityNamespace }}
+---
+# The only cluster-scoped grant the deployer holds, and the only one it needs:
+# a pipeline creating its own namespace under the parent.
+#
+#   no update/patch  it cannot relabel an existing namespace into the family;
+#   no list/watch    it cannot enumerate the cluster. helm only ever needs get
+#                    on the release namespace.
+#
+# create against an existing name fails, so no namespace can be taken over.
+# create and delete are fenced by azdo-namespace-family in files/policies.yaml,
+# which is fail-closed -- a Kyverno outage denies them rather than unfencing.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: azdo-deployer-namespaces
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: azdo-deployer-namespaces
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: azdo-deployer-namespaces
+subjects:
+  - kind: ServiceAccount
+    name: azdo-deployer
+    namespace: {{ .Values.identityNamespace }}

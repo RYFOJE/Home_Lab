@@ -39,7 +39,8 @@ rebuild of layers 30→60. Everything else has a path back.
 | `az login` | Every layer's backend and secret lookups |
 | A machine on **VLAN 10** | FW-003 (kube API), FW-003-talos (Talos API), FW-006 (router), PVE-FW-002/003 (Proxmox), LXC-FW-005 (SSH to the core-infra LXCs) permit admin access from that VLAN only. PVE runs `input_policy = DROP` — applying 20-proxmox from anywhere else locks out the API mid-apply |
 | This repo | `git clone`, then `cd terraform/<layer>` per step |
-| `ansible-core` ≥ 2.15 | Step 3 of a full rebuild (`core_infra.md`) |
+| `ansible-core` ≥ 2.15 | Steps 3 and 10 of a full rebuild (`core_infra.md`, `azdo_agents.md`) |
+| `kubectl` | Verifying steps 5 and 9, and step 10 reads the deployer token through it |
 
 ---
 
@@ -143,9 +144,11 @@ flowchart LR
     L --> C[7. 50-cloudflare]
     C --> A[8. 60-argo-cd]
     A --> G[9. ArgoCD converges]
+    G --> Z[10. azdo agents<br/>ansible]
 
     style M fill:#c1440e,color:#fff
     style L fill:#c1440e,color:#fff
+    style Z fill:#c1440e,color:#fff
     style T fill:#1f6f8b,color:#fff
     style K fill:#1f6f8b,color:#fff
 ```
@@ -156,7 +159,7 @@ Steps 4 and 5 run **back to back** — between them the cluster looks broken by 
 |---|---|---|---|
 | 0 | Physical + UniFi | `unifi-password`, `wlan-passphrase-home{,-iot,-mgmt}` | See `../networking/physical_network.md` "Bootstrap" |
 | 1 | `10-network` | *(above)* | Switch on `10.0.10.2`, AP on `10.0.10.6`, 3 SSIDs up |
-| 2 | `20-proxmox` | `proxmox-api-token` | 3 VMs + 2 LXCs running |
+| 2 | `20-proxmox` | `proxmox-api-token` | 3 VMs + 4 LXCs running |
 | 3 | **core-infra DNS** — `ansible/` | `technitium-admin-password`, `public-domain` | `dig @10.0.10.4` and `@10.0.10.5` answer |
 | 4 | `30-talos` | — *(writes 2)* | Nodes exist and are **NotReady** — correct, no CNI yet |
 | 5 | `40-kube-networking` | `public-domain`, `acme-email` | All 3 nodes Ready; the three `platform-*` PriorityClasses exist; both Traefik Services hold their LB IPs. The wildcard cert is **Pending** — correct, see below |
@@ -164,6 +167,7 @@ Steps 4 and 5 run **back to back** — between them the cluster looks broken by 
 | 7 | `50-cloudflare` | `cert-manager--cloudflare-dns-api-token`, `cloudflare-account-id`, `public-domain` | Tunnel healthy; `cloudflared--tunnel-token` written |
 | 8 | `60-argo-cd` | `argocd-admin-password-bcrypt`, `azure-kv-sp-client-id`, `azure-kv-sp-client-secret`, `public-domain` | ArgoCD UI reachable over the wildcard cert once step 9 has issued it |
 | 9 | *(unattended)* | — | See [Sync Apps](#sync-apps), then the wildcard cert reaches `Ready` |
+| 10 | **Azure DevOps agents** — `ansible/` | `azdo-pat`, `azdo-org-url`, `talos-kubeconfig` | Both agents Online in the pool; `kubectl auth can-i` from each LXC answers `yes` |
 
 Each layer is `cd terraform/<layer> && terraform init && terraform apply`.
 
@@ -206,6 +210,15 @@ Each layer is `cd terraform/<layer> && terraform init && terraform apply`.
 - **Step 9** — the PostgreSQL cluster comes back empty. It has no backups (`databases.md`),
   so nothing in this runbook restores it; the apps that depend on it come up against a fresh
   database.
+- **Step 10** — the containers have been running since step 2 and idle since; only the
+  software inside them is new here. It cannot move earlier: the `azdo-deployer` ServiceAccount
+  and its token are GitOps objects at wave 2, so they do not exist until step 9. The token
+  `Secret` is filled in by the token controller rather than by ArgoCD, so a run started the
+  moment the app reports `Synced` can read it back empty — the play asserts on that instead of
+  templating an empty credential. `config.sh` runs with `--replace`, so a rebuilt container
+  reclaims its own name in the pool; without it the registration is refused as a duplicate and
+  the fix is deleting the stale agent in the Azure DevOps UI. Nothing else in the rebuild
+  depends on this step, so a failure here costs pipelines and nothing more.
 
 ## Single Node Lost
 
@@ -272,6 +285,7 @@ Without versioning, [Restore State](#restore-state) has nothing to restore from.
 | PostgreSQL | **nothing** — the cluster is replicated, not backed up (`databases.md`) |
 | VM/CT system disks | PBS jobs (Longhorn data disks excluded — `../networking/allocations.md`) |
 | Technitium zones + blocklists | `ansible/` for the managed set; Technitium config backup for the rest |
+| Azure DevOps agent registration | **nothing, deliberately** — `ansible/azdo-agent.yml` re-registers with `--replace` |
 | UniFi controller config | Controller auto-backup (System > Backups) |
 | **The PBS datastore itself** | Off-site PBS sync or encrypted `rclone` push |
 | Key Vault | Soft-delete + purge protection |

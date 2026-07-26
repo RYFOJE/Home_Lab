@@ -13,9 +13,10 @@ vault by External Secrets Operator (`kubernetes/apps/security/external-secrets`)
 namespace cannot read another's secrets (`programming/gitops_apps.md`). The three secrets
 consumed directly by Terraform to bootstrap that path (below) are unprefixed.
 
-The core-infra DNS servers are a third path: they are not a Terraform layer and hold no
-in-cluster identity, so `ansible/` reads its two secrets on the control node with
-`az keyvault secret show` (`infrastructure/core_infra.md`).
+`ansible/` is a third path, for both its plays: neither the core-infra DNS servers nor the
+Azure DevOps agents are a Terraform layer, and neither holds an in-cluster identity, so each
+play reads its secrets on the control node with `az keyvault secret show`
+(`infrastructure/core_infra.md`, `infrastructure/azdo_agents.md`).
 
 **Terraform creates exactly one Secret in the cluster**: `azure-kv-creds` in the
 `external-secrets` namespace (60-argo-cd `gitops.tf`), the credential ESO cannot fetch for
@@ -54,7 +55,9 @@ az keyvault secret set --vault-name rj-london --name <name> --value <value>
 | `databases--postgres-superuser-password` | ESO (`postgres`) | Password for the PostgreSQL `postgres` superuser. Synced by ESO into the `postgres-superuser` basic-auth Secret in `databases` and set on the Cluster's `superuserSecret`, which the operator reads only because `enableSuperuserAccess: true` accompanies it — that field defaults to false, and while false the secret is ignored and the password blanked to `NULL`. The username is fixed in the manifest, not stored here (`infrastructure/databases.md`) |
 | `databases--postgres-app-password` | ESO (`postgres`) | Password for the `app` role that owns the initial database. Consumed at bootstrap via `bootstrap.initdb.secret` and thereafter by clients. The role is also declared under `managed.roles`, so the operator reconciles the password continuously and rotation is a vault edit rather than a manual `ALTER ROLE` |
 | `talos-talosconfig` | nothing (break-glass) | Client config for `talosctl` — node-level control of all three machines. **Written**, never read: 30-talos `kv.tf` publishes it so the loss of `30-talos.tfstate` does not also cost admin access to a live cluster (`infrastructure/disaster_recovery.md`). Retrieve with `az keyvault secret show` |
-| `talos-kubeconfig` | nothing (break-glass) | cluster-admin kubeconfig for the kube API. Same handling and same rationale as `talos-talosconfig`. Downstream layers still consume the kubeconfig via `terraform_remote_state`, not from here |
+| `talos-kubeconfig` | `ansible/` (azdo-agent), break-glass | cluster-admin kubeconfig for the kube API. Written by 30-talos `kv.tf` for the same reason as `talos-talosconfig`; downstream Terraform layers still consume the kubeconfig via `terraform_remote_state`, not from here. It has one routine reader: `ansible/azdo-agent.yml` uses it on the control node for a single `kubectl get secret`, to read the `azdo-deployer` ServiceAccount token and template a scoped kubeconfig onto the agent LXCs. That token is derived state — regenerated on every cluster rebuild — so a Key Vault copy of it would drift silently; reading it live is what avoids that (`infrastructure/azdo_agents.md`). The admin credential is written to a mode-0600 tempfile, never leaves the control node, and is removed by the play's always-block |
+| `azdo-pat` | `ansible/` (azdo-agent) | Azure DevOps personal access token the agents register with. Scope: **Agent Pools (Read & manage)** and nothing else. Used once per host by `config.sh`; the agent negotiates its own credential afterwards and stores it in `.credentials`, so the PAT can be revoked once both agents are Online. Read on the control node with `az keyvault secret show`, not by Terraform — the agents are not a Terraform-managed layer (`infrastructure/azdo_agents.md`) |
+| `azdo-org-url` | `ansible/` (azdo-agent) | The Azure DevOps organisation URL (`https://dev.azure.com/<org>`). Stored as a secret because the organisation name identifies the account, the same treatment `public-domain` and `cloudflare-account-id` get (PII rule). It also ends up inside the systemd unit name `svc.sh` generates, which is why the play reads that name from a file and never logs it |
 
 WLAN passphrase names follow the pattern `wlan-passphrase-<wlan key>` with underscores in
 the `wlan_configs` key replaced by dashes (`10-network/main.tf`); adding an SSID means
@@ -65,6 +68,8 @@ kubeconfig) are generated into Terraform state and passed between layers via
 `terraform_remote_state`. It is the only layer that writes to the vault without reading
 from it: `talos-talosconfig` and `talos-kubeconfig` above are break-glass copies, so the
 one layer whose state is unrecoverable is not also the one layer whose credentials are.
+`talos-talosconfig` has stayed break-glass-only; `talos-kubeconfig` has one routine reader
+(the row above), and the asymmetry is deliberate — node-level control never became routine.
 The machine secrets themselves are deliberately **not** copied — they are the cluster's
 root of trust, and a second copy is a second thing to compromise for no recovery benefit
 (holding them without the state file still does not let Terraform manage the cluster).

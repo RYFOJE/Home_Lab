@@ -1,0 +1,30 @@
+---
+# config.sh refuses to run as root, and svc.sh runs the generated unit as this
+# account. nologin is fine either way: `become` uses `sudo -u <user> /bin/sh -c`
+# and systemd sets the command directly, so neither consults the account shell.
+- name: Create the agent group
+  ansible.builtin.group:
+    name: "{{ azdo_agent_group }}"
+    system: true
+
+- name: Create the agent user
+  ansible.builtin.user:
+    name: "{{ azdo_agent_user }}"
+    group: "{{ azdo_agent_group }}"
+    home: "{{ azdo_agent_home }}"
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+
+# HOME is the install directory, which is why kubectl and helm find
+# .kube/config with no KUBECONFIG in any pipeline definition.
+- name: Create the agent directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ azdo_agent_user }}"
+    group: "{{ azdo_agent_group }}"
+    mode: "0750"
+  loop:
+    - "{{ azdo_agent_home }}"
+    - "{{ azdo_agent_work }}"

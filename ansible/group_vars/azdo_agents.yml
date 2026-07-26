@@ -1,0 +1,44 @@
+---
+# Shared configuration for the Azure DevOps deployment agents.
+# documentation/infrastructure/azdo_agents.md owns the decisions below.
+
+ansible_user: root
+
+# 20-proxmox points these containers at 10.0.10.4/.5, which have been serving
+# since long before this play runs (disaster_recovery.md: step 3 precedes step
+# 10). The bootstrap role's swap to a public resolver must not run here --
+# FW-013 permits only .4/.5 outbound on 53, so it would leave the host with no
+# resolver at all rather than a temporary one.
+bootstrap_swap_resolver: false
+
+# PII rule (README, documentation/secrets.md): the organisation URL names the
+# account and is treated like the public domain. Read at play time on the
+# control node.
+#
+# A lookup() in a var re-evaluates on every reference; the play resolves these
+# into facts once, same as core-infra.yml.
+azdo_org_url_source: >-
+  {{ lookup('ansible.builtin.pipe',
+            'az keyvault secret show --vault-name ' ~ key_vault_name ~
+            ' --name azdo-org-url --query value -o tsv') }}
+
+azdo_pat_source: >-
+  {{ lookup('ansible.builtin.pipe',
+            'az keyvault secret show --vault-name ' ~ key_vault_name ~
+            ' --name azdo-pat --query value -o tsv') }}
+
+# Not a secret -- it names nothing outside the organisation, and a change to it
+# should be reviewable.
+azdo_agent_pool: homelab
+
+# Where the deployer identity lives -- deliberately not a namespace the deployer
+# has any rights in (kubernetes/apps/platform/azdo-deployer). Read by
+# tasks/azdo-kubeconfig.yml, which runs before the role, so it lives here rather
+# than in the role's defaults; the namespace the agent deploys into is
+# azdo_agent_parent_namespace there.
+azdo_identity_namespace: azdo-system
+
+# Every task templating the PAT, the org URL, the ServiceAccount token or the
+# systemd unit name (which embeds the org). Override to false for a debugging
+# run; never in a committed file.
+azdo_agent_no_log: true

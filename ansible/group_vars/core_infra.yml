@@ -4,8 +4,6 @@
 
 ansible_user: root
 
-key_vault_name: rj-london
-
 # Final resolver list written back to /etc/resolv.conf, primary first. Must stay
 # identical to what 20-proxmox sets at container create (core-infra.tf
 # initialization.dns) so a later terraform apply has nothing to reassert.
@@ -79,6 +77,8 @@ technitium_infra_records:
   - { name: core-infra-1, ip: 10.0.10.4 }
   - { name: core-infra-2, ip: 10.0.10.5 }
   - { name: ap, ip: 10.0.10.6 }
+  - { name: azdo-agent-1, ip: 10.0.10.7 }
+  - { name: azdo-agent-2, ip: 10.0.10.8 }
   - { name: pve1, ip: 10.0.10.11 }
   - { name: pve2, ip: 10.0.10.12 }
   - { name: pve3, ip: 10.0.10.13 }

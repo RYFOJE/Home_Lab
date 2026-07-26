@@ -24,8 +24,8 @@
 #   - `category` tells you WHY a rule exists:
 #       required     - the homelab does not function correctly without this.
 #       hardening    - improves security posture but nothing breaks if you skip it.
-#   - Rule IDs are renumbered when rules are added/removed (last: Longhorn backup path to
-#     PBS) - do not assume IDs are stable across git history.
+#   - Rule IDs are renumbered when rules are added/removed (last: the Azure DevOps agent LXC
+#     vNIC rules, appended as LXC-FW-007/008) - do not assume IDs are stable across git history.
 #
 # VLAN 12 (Storage/Longhorn) has NO router rules by design: no router sub-interface exists,
 # so the VLAN is an isolated L2 island with no L3 path in or out. Isolation is structural,
@@ -236,6 +236,10 @@ rules:
     rationale: >
       Technitium forwards non-home.arpa queries upstream (53) and needs 443 for
       updates/blocklists; chrony syncs from the public NTP pool (123).
+      The source list is exactly the two resolvers and stays that way: every other
+      VLAN 10 host resolves against 10.0.10.4/.5 over intra-VLAN traffic the router
+      never sees, so none of them needs outbound 53 and none gets it. The Azure
+      DevOps agents (10.0.10.7/.8) are the case this note exists for.
 
   - id: FW-014
     name: mgmt-to-internet
@@ -608,6 +612,42 @@ rules:
     protocol: [icmp]
     ports: [echo-request]
     rationale: Ping diagnostics for the DNS/NTP containers from the management network.
+
+  # -----------------------------------------------------------------------
+  # Azure DevOps agent LXC vNIC rules (10.0.10.7, 10.0.10.8)
+  # Inbound only, and only these two. The agents' own traffic is all outbound
+  # and already covered by rules scoped to the whole of VLAN 10: FW-014 (tcp 443
+  # to Azure DevOps, package repos, dl.k8s.io, get.helm.sh), FW-003 (tcp 6443 to
+  # the kube API VIP) and FW-004 (tcp 80/443 to the LB pool). No FW-* rule was
+  # added for these hosts, deliberately - an agent that needed one would be an
+  # agent reaching somewhere VLAN 10 is not already allowed to reach.
+  # -----------------------------------------------------------------------
+
+  - id: LXC-FW-007
+    name: admin-to-azdo-agent-ssh
+    layer: proxmox-host
+    category: required
+    action: allow
+    source: VLAN 10 (10.0.10.0/24)
+    destination: [10.0.10.7, 10.0.10.8]
+    protocol: [tcp]
+    ports: [22]
+    rationale: >
+      SSH for the Ansible play that installs the agent, kubectl and helm
+      (ansible/azdo-agent.yml) -- the LXCs have no cloud-init, so this is the only
+      path in. Same posture as LXC-FW-005: management network only, deliberately
+      not reachable from VLAN 13.
+
+  - id: LXC-FW-008
+    name: admin-to-azdo-agent-icmp
+    layer: proxmox-host
+    category: hardening
+    action: allow
+    source: VLAN 10 (10.0.10.0/24)
+    destination: [10.0.10.7, 10.0.10.8]
+    protocol: [icmp]
+    ports: [echo-request]
+    rationale: Ping diagnostics for the agent containers from the management network.
 
   - id: PVE-FW-900
     name: default-deny-inbound

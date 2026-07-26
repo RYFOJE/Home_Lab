@@ -1,0 +1,92 @@
+---
+# Pinned static binaries, not apt repositories: these versions track things
+# outside Debian -- the cluster's control plane, and the helm CI validates
+# charts with -- and a repository would drift from both.
+#
+# Each tool follows the same shape: probe, install only on a mismatch, assert.
+# `creates:` alone would make a version bump a silent no-op, since the file is
+# already there.
+
+- name: Read the installed kubectl version
+  ansible.builtin.command: kubectl version --client=true --output=json
+  register: azdo_agent_kubectl_installed
+  failed_when: false
+  changed_when: false
+
+- name: Install kubectl
+  ansible.builtin.get_url:
+    url: "{{ azdo_agent_kubectl_url }}"
+    dest: /usr/local/bin/kubectl
+    # Published alongside the binary as a bare hash, so the checksum follows the
+    # pin instead of being a second thing to bump.
+    checksum: "sha256:{{ lookup('ansible.builtin.url', azdo_agent_kubectl_url ~ '.sha256') | trim }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: >-
+    azdo_agent_kubectl_installed.rc != 0 or
+    (azdo_agent_kubectl_installed.stdout | from_json).clientVersion.gitVersion != azdo_agent_kubectl_version
+
+- name: Read the installed helm version
+  ansible.builtin.command: helm version --short
+  register: azdo_agent_helm_installed
+  failed_when: false
+  changed_when: false
+
+- name: Install helm
+  ansible.builtin.unarchive:
+    src: "{{ azdo_agent_helm_url }}"
+    dest: /usr/local/bin
+    remote_src: true
+    # Published as `<hash>  <filename>`, unlike kubectl's bare hash.
+    checksum: "sha256:{{ (lookup('ansible.builtin.url', azdo_agent_helm_url ~ '.sha256sum') | trim).split()[0] }}"
+    extra_opts:
+      - --strip-components=1
+      - linux-amd64/helm
+    owner: root
+    group: root
+    mode: "0755"
+  when: >-
+    azdo_agent_helm_installed.rc != 0 or
+    azdo_agent_helm_installed.stdout | trim | split('+') | first != azdo_agent_helm_version
+
+- name: Read the installed yq version
+  ansible.builtin.command: yq --version
+  register: azdo_agent_yq_installed
+  failed_when: false
+  changed_when: false
+
+# No checksum: mikefarah publishes one table covering every asset and hash
+# algorithm rather than a per-file digest, and parsing it here would be more
+# moving parts than the assertion below is worth. HTTPS plus a version check is
+# the posture the technitium role takes for its installer.
+- name: Install yq
+  ansible.builtin.get_url:
+    url: "{{ azdo_agent_yq_url }}"
+    dest: /usr/local/bin/yq
+    owner: root
+    group: root
+    mode: "0755"
+  when: >-
+    azdo_agent_yq_installed.rc != 0 or
+    azdo_agent_yq_installed.stdout | trim | split(' ') | last != azdo_agent_yq_version
+
+- name: Read the tool versions back
+  ansible.builtin.command: "{{ item }}"
+  register: azdo_agent_tools_installed
+  loop:
+    - kubectl version --client=true --output=json
+    - helm version --short
+    - yq --version
+  changed_when: false
+
+- name: Verify the tools match their pins
+  ansible.builtin.assert:
+    that:
+      - (azdo_agent_tools_installed.results[0].stdout | from_json).clientVersion.gitVersion == azdo_agent_kubectl_version
+      - azdo_agent_tools_installed.results[1].stdout | trim | split('+') | first == azdo_agent_helm_version
+      - azdo_agent_tools_installed.results[2].stdout | trim | split(' ') | last == azdo_agent_yq_version
+    fail_msg: >-
+      A tool does not match its pin in roles/azdo_agent/defaults/main.yml.
+      Expected kubectl {{ azdo_agent_kubectl_version }},
+      helm {{ azdo_agent_helm_version }}, yq {{ azdo_agent_yq_version }}.

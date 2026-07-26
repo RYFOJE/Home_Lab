@@ -1,0 +1,13 @@
+# Only the values the templates actually read. The parent label
+# (home.arpa/parent), the child PSA level and the child memory ceiling are
+# literals in files/policies.yaml instead: that file is included verbatim via
+# .Files.Get so the Kyverno CLI in CI evaluates the same bytes the cluster
+# admits on, and templating it would break that. Changing any of the three is a
+# change in that file.
+identityNamespace: azdo-system
+parentNamespace: dev
+
+# The parent namespace's own level. Children get baseline from the mutate rule
+# in files/policies.yaml -- a child is created by a pipeline, which is
+# unreviewed code, and restricted would reject most of what it deploys.
+psaEnforce: baseline

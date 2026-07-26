@@ -27,6 +27,29 @@ kyverno:
     # blast radius -- it stops reporting during an outage rather than blocking.
     replicas: 2
 
+  backgroundController:
+    rbac:
+      clusterRole:
+        # generate rules execute in this controller, and it can only create
+        # kinds it holds permission for -- without these the rules in
+        # kubernetes/apps/platform/azdo-deployer report success and produce
+        # nothing. The chart's default set covers neither kind.
+        extraResources:
+          - apiGroups: [""]
+            resources: [limitranges]
+            verbs: [get, list, watch, create, update, patch, delete]
+          - apiGroups: [rbac.authorization.k8s.io]
+            resources: [rolebindings]
+            verbs: [get, list, watch, create, update, patch, delete]
+          # Kubernetes refuses a RoleBinding whose creator holds neither the
+          # referenced role's permissions nor bind on it (escalation
+          # prevention). Pinned by name so this is a grant to make one binding,
+          # not a licence to bind anything.
+          - apiGroups: [rbac.authorization.k8s.io]
+            resources: [clusterroles]
+            resourceNames: [azdo-deployer]
+            verbs: [bind]
+
   # The chart's own Grafana dashboard for the metrics kyverno-monitoring's
   # ServiceMonitor scrapes (admission review latency, policy results by
   # policy/rule/result, controller queue depth). Renders as a plain ConfigMap

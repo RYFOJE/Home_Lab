@@ -1,0 +1,26 @@
+---
+# The agent ships a self-contained .NET runtime but links against system ICU,
+# Kerberos and LTTng. Listed here rather than running the agent's own
+# bin/installdependencies.sh, which shells out to apt itself and reports no
+# useful changed state.
+#
+# sudo is not in the Debian LXC template and the play becomes the service user
+# to register the agent. git/jq/unzip are pipeline glue, not agent dependencies.
+- name: Ensure the agent's dependencies and the pipeline tooling are present
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - git
+      - jq
+      - libicu72
+      - libkrb5-3
+      - liblttng-ust1
+      - libssl3
+      - sudo
+      - tar
+      - unzip
+      - zlib1g
+    state: present
+    update_cache: true
+    cache_valid_time: 3600

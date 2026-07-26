@@ -1,0 +1,21 @@
+---
+- name: Install packages
+  ansible.builtin.import_tasks: packages.yml
+
+- name: Create the service account
+  ansible.builtin.import_tasks: user.yml
+
+- name: Install the deploy tooling
+  ansible.builtin.import_tasks: tools.yml
+
+- name: Install the agent
+  ansible.builtin.import_tasks: install.yml
+
+- name: Register the agent with Azure DevOps
+  ansible.builtin.import_tasks: configure.yml
+
+- name: Write the deployer kubeconfig
+  ansible.builtin.import_tasks: kubeconfig.yml
+
+- name: Install and start the service
+  ansible.builtin.import_tasks: service.yml

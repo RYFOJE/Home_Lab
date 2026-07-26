@@ -1,0 +1,32 @@
+---
+# config.sh is not idempotent: a second unattended run against a configured
+# agent errors out rather than reconciling. `.agent` is what it writes on
+# success, alongside `.credentials`, so it is the guard.
+- name: Check whether the agent is already registered
+  ansible.builtin.stat:
+    path: "{{ azdo_agent_home }}/.agent"
+  register: azdo_agent_registered
+
+# --replace so a rebuilt container reclaims its own name in the pool instead of
+# being refused as a duplicate (disaster_recovery.md, step 10). The PAT is used
+# here and nowhere else -- the agent negotiates its own credential and stores it
+# in .credentials, so the PAT can be revoked afterwards.
+- name: Register the agent
+  ansible.builtin.command:
+    argv:
+      - ./config.sh
+      - --unattended
+      - --url={{ azdo_org_url }}
+      - --auth=pat
+      - --token={{ azdo_pat }}
+      - --pool={{ azdo_agent_pool }}
+      - --agent={{ inventory_hostname }}
+      - --work={{ azdo_agent_work }}
+      - --replace
+      - --acceptTeeEula
+    chdir: "{{ azdo_agent_home }}"
+  become: true
+  become_user: "{{ azdo_agent_user }}"
+  when: not azdo_agent_registered.stat.exists
+  changed_when: true
+  no_log: "{{ azdo_agent_no_log }}"

@@ -23,7 +23,7 @@ cd ansible && ansible-playbook core-infra.yml
 Requires `ansible-core` ≥ 2.15 on the control node, `az login` (both values it needs are
 Key Vault secrets), a control node on VLAN 10 (LXC-FW-005 permits SSH to `.4`/`.5` from
 VLAN 10 only, matching LXC-FW-004's posture for the web console), and the private half of
-`core_infra_ssh_public_key` from `terraform/20-proxmox/terraform.tfvars`.
+`lxc_ssh_public_key` from `terraform/20-proxmox/terraform.tfvars`.
 
 The play is `serial: 1` over an inventory that lists the primary first: the secondary's
 zones are created as secondaries pointing at `10.0.10.4`, so the primary must already be

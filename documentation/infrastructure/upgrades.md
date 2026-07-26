@@ -218,6 +218,32 @@ own window (`core_infra.md`).
 
 ---
 
+## Azure DevOps agents
+
+Four pins, all in `roles/azdo_agent/defaults/main.yml`, all kept fresh by a
+Renovate custom manager: the agent itself, `kubectl`, `helm` and `yq`. An
+upgrade is a version edit and a normal playbook run — the role probes each
+tool, installs only on a mismatch, and asserts afterwards.
+
+The agent is the one that will surprise you. **Azure DevOps upgrades an agent
+in place** when the server requires a newer one, so the version on disk drifts
+upward on its own. The assertion after install is what turns that into a
+visible failure instead of silent drift, and the fix is to repin to what the
+server installed, never to roll back — a downgraded agent is upgraded again on
+its next job.
+
+`azdo_agent_kubectl_version` is not independent: it tracks the cluster's
+control plane, one minor of skew either way, so it moves with step 3 below and
+in the same window. `azdo_agent_helm_version` tracks the pin in
+`.github/workflows/cluster-policy-check.yml`, so an agent renders a chart with
+the helm CI validated it with.
+
+Otherwise the agents sit outside the ordering below entirely: nothing in the
+stack depends on them, and an agent that is down costs pipelines and nothing
+else (`azdo_agents.md`).
+
+---
+
 ## UniFi and Proxmox
 
 Neither is Terraform-managed.

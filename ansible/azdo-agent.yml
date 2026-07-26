@@ -1,0 +1,44 @@
+---
+# Self-hosted Azure DevOps agents on the VLAN 10 LXCs. Terraform creates the
+# containers (terraform/20-proxmox/azdo-agent.tf); this configures what runs
+# inside them. documentation/infrastructure/azdo_agents.md
+#
+# Runs LAST in a rebuild, not between layers 20 and 30 like core-infra.yml: the
+# ServiceAccount the agents authenticate to the cluster as is a GitOps object
+# (kubernetes/apps/platform/azdo-deployer) and its token does not exist until
+# ArgoCD has converged.
+- name: Azure DevOps agents
+  hosts: azdo_agents
+  gather_facts: false
+
+  tasks:
+    - name: Configure the agents
+      block:
+        - name: Resolve the Key Vault lookups once
+          ansible.builtin.set_fact:
+            azdo_org_url: "{{ azdo_org_url_source }}"
+            azdo_pat: "{{ azdo_pat_source }}"
+          no_log: "{{ azdo_agent_no_log }}"
+
+        - name: Make the container usable by Ansible
+          ansible.builtin.import_role:
+            name: bootstrap
+
+        - name: Read the deployer credential out of the cluster
+          ansible.builtin.import_tasks: tasks/azdo-kubeconfig.yml
+
+        - name: Install and configure the agent
+          ansible.builtin.import_role:
+            name: azdo_agent
+
+      always:
+        # The break-glass kubeconfig is cluster-admin. It never leaves the
+        # control node and does not outlive the run, including a failed one.
+        - name: Remove the break-glass kubeconfig
+          ansible.builtin.file:
+            path: "{{ azdo_admin_kubeconfig.path }}"
+            state: absent
+          delegate_to: localhost
+          run_once: true
+          when: azdo_admin_kubeconfig is defined
+          changed_when: false

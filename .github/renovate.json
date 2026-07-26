@@ -22,6 +22,14 @@
     },
     {
       "customType": "regex",
+      "description": "The Azure DevOps agent, kubectl, helm and yq pins in the azdo_agent role's defaults. Plain Ansible vars, invisible to every built-in manager, and all four track something outside Debian -- the agent's own release train, the cluster's control plane, and the helm CI validates charts with. extractVersion is per-pin because the agent's download URL omits the tag's leading v and the others keep it.",
+      "managerFilePatterns": ["/^ansible/roles/azdo_agent/defaults/main\\.yml$/"],
+      "matchStrings": [
+        "#\\s*renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\S+:\\s*\"(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Image tags inside the vendored Multus/whereabouts manifests (terraform/40-kube-networking/manifests). No helm chart exists upstream, so these plain YAML copies were previously invisible to every manager and would have rotted silently. A PR here means the whole manifest needs re-vendoring, not just the tag -- see that directory's PROVENANCE.md.",
       "managerFilePatterns": ["/^terraform/40-kube-networking/manifests/.+\\.yaml$/"],
       "matchStrings": [

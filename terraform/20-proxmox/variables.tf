@@ -111,12 +111,12 @@ variable "mgmt_gateway" {
 }
 
 variable "debian_template_url" {
-  description = "Debian LXC template for the core-infra containers"
+  description = "Debian LXC template every container in this layer boots from"
   type        = string
 }
 
-variable "core_infra_ssh_public_key" {
-  description = "SSH public key for root in the core-infra LXCs (Technitium/chrony install happens over SSH)"
+variable "lxc_ssh_public_key" {
+  description = "SSH public key for root in this layer's LXCs -- their software is installed over SSH by ansible/"
   type        = string
 }
 
@@ -133,6 +133,39 @@ variable "core_infra_memory_mb" {
 variable "core_infra_disk_gb" {
   description = "Root disk size per core-infra LXC in GiB"
   type        = number
+}
+
+# -----------------------------------------------------------------------
+# Azure DevOps agent LXCs (documentation/infrastructure/azdo_agents.md)
+# -----------------------------------------------------------------------
+
+variable "azdo_agents" {
+  description = "Azure DevOps deployment agent LXCs on VLAN 10 (allocations.md). Key = container hostname, which is also the agent name in the pool."
+  type = map(object({
+    pve_node = string # Proxmox host that runs this LXC (split across hosts so one reboot costs one agent)
+    ct_id    = number
+    ip       = string # static VLAN 10 address
+  }))
+}
+
+variable "azdo_agent_cores" {
+  description = "vCPU cores per Azure DevOps agent LXC"
+  type        = number
+}
+
+variable "azdo_agent_memory_mb" {
+  description = "RAM per Azure DevOps agent LXC in MiB"
+  type        = number
+}
+
+variable "azdo_agent_disk_gb" {
+  description = "Root disk size per Azure DevOps agent LXC in GiB (agent install, _work, downloaded charts)"
+  type        = number
+}
+
+variable "azdo_agent_security_groups" {
+  description = "Keys into firewall_security_groups to attach to every Azure DevOps agent LXC vNIC, in order."
+  type        = list(string)
 }
 
 # -----------------------------------------------------------------------

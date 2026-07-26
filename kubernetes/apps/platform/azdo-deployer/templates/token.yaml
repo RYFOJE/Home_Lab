@@ -1,0 +1,22 @@
+# A long-lived ServiceAccount token, read once per agent by
+# ansible/azdo-agent.yml and written into the LXC's kubeconfig.
+#
+# The better mechanism is a projected TokenRequest token, and it cannot be used
+# here: projection is a pod volume feature and the consumer is a process in an
+# LXC outside the cluster. The remaining alternative, `kubectl create token
+# --duration`, is bound and expiring -- which turns an unattended CI agent into
+# something that stops working on a date nobody wrote down. It stays the
+# documented manual rotation path instead.
+#
+# No data: here. The token controller populates token/ca.crt/namespace on the
+# live object, which is why the registry entry carries ignoreDifferences on
+# /data -- without it the app is permanently OutOfSync and selfHeal loops
+# against the controller.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azdo-deployer-token
+  namespace: {{ .Values.identityNamespace }}
+  annotations:
+    kubernetes.io/service-account.name: azdo-deployer
+type: kubernetes.io/service-account-token

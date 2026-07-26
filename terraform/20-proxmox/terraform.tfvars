@@ -8,8 +8,8 @@ proxmox_insecure = true
 key_vault_name                = "rj-london"
 key_vault_resource_group_name = "terraform"
 
-# SSH public key for root in the core-infra DNS/NTP LXCs.
-core_infra_ssh_public_key = "ssh-ed25519 AAAA... you@machine" # PLACEHOLDER: set before applying
+# SSH public key for root in every LXC this layer creates.
+lxc_ssh_public_key = "ssh-ed25519 AAAA... you@machine" # PLACEHOLDER: set before applying
 
 # -----------------------------------------------------------------------
 # Talos nodes (documentation/networking/allocations.md)
@@ -57,6 +57,23 @@ debian_template_url = "http://download.proxmox.com/images/system/debian-12-stand
 core_infra_cores     = 2
 core_infra_memory_mb = 1024
 core_infra_disk_gb   = 8
+
+# -----------------------------------------------------------------------
+# Azure DevOps agent LXCs (allocations.md: .7 on pve1, .8 on pve3)
+#
+# Split across hosts for the same reason as core-infra: a pve host reboot takes
+# its k8s node with it (upgrades.md, one host at a time), and both agents on one
+# host would make that also cost every pipeline. pve2 is skipped -- it already
+# carries core-infra-2.
+# -----------------------------------------------------------------------
+azdo_agents = {
+  azdo-agent-1 = { pve_node = "pve1", ct_id = 107, ip = "10.0.10.7" }
+  azdo-agent-2 = { pve_node = "pve3", ct_id = 108, ip = "10.0.10.8" }
+}
+
+azdo_agent_cores     = 2
+azdo_agent_memory_mb = 2048 # the agent's .NET runtime plus kubectl/helm; no builds run here
+azdo_agent_disk_gb   = 16   # agent install + _work + downloaded charts
 
 # -----------------------------------------------------------------------
 # Firewall (documentation/networking/firewall_rules.yaml, layer 2)
@@ -214,6 +231,33 @@ firewall_security_groups = {
       },
     ]
   }
+
+  # Attached to the Azure DevOps agent LXC vNICs (firewall=1 -- azdo-agent.tf).
+  # Inbound only: the agent long-polls Azure DevOps outbound (FW-014) and dials
+  # the kube API (FW-003), both stateful return traffic, so it listens on
+  # nothing and no rule here opens a service port.
+  azdo_agent = {
+    name    = "azdo-agent-lxc"
+    comment = "LXC-FW-007..008: ssh/icmp inbound to 10.0.10.7-.8"
+    rules = [
+      {
+        comment = "LXC-FW-007 admin-to-azdo-agent-ssh"
+        type    = "in"
+        action  = "ACCEPT"
+        source  = "10.0.10.0/24"
+        proto   = "tcp"
+        dport   = "22"
+      },
+      {
+        comment = "LXC-FW-008 admin-to-azdo-agent-icmp"
+        type    = "in"
+        action  = "ACCEPT"
+        source  = "10.0.10.0/24"
+        macro   = "Ping"
+      },
+    ]
+  }
 }
 
 core_infra_security_groups = ["core_infra"]
+azdo_agent_security_groups = ["azdo_agent"]

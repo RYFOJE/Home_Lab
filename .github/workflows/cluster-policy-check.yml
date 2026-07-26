@@ -105,15 +105,27 @@ jobs:
       - name: Render manifests and check the mirrored rules
         run: python scripts/check_cluster_policy.py --dump rendered
 
-      # Both policy apps, not just kyverno-policies: the dump stamps each
+      # Every policy app, not just kyverno-policies: the dump stamps each
       # GitOps app's destination namespace, which is what cluster-secrets'
       # keys-carry-namespace-prefix rule builds its expected Key Vault prefix
       # from -- so an ExternalSecret reaching for another namespace's key is
       # caught here too.
+      #
+      # azdo-deployer ships a second policy file, namespace-fence.yaml, and it is
+      # deliberately absent below. Its rules match on `subjects`, and the CLI
+      # supplies no requester -- with none it treats a subject-matched rule as
+      # matching every request, so the fence fires against namespaces no pipeline
+      # will ever touch (Namespace/cilium-secrets among them) and the job fails on
+      # manifests the cluster admits. Passing a synthetic --userinfo would silence
+      # that, at the cost of a file that also silently scopes any future
+      # subject- or role-matched rule in the two policy files above. The fence is
+      # verified against a live API server with `kubectl --as` instead
+      # (documentation/infrastructure/azdo_agents.md).
       - name: Evaluate the real policies against the rendered manifests
         run: |
           kyverno apply \
             kubernetes/apps/security/kyverno-policies/files/policies.yaml \
             kubernetes/apps/security/cluster-secrets/files/policies.yaml \
+            kubernetes/apps/platform/azdo-deployer/files/policies.yaml \
             --resource rendered \
             --audit-warn

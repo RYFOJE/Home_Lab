@@ -1,0 +1,5 @@
+---
+# One vault, two plays. Both read their secrets on the control node with
+# `az keyvault secret show` -- neither host group is a Terraform layer and
+# neither holds an in-cluster identity (documentation/secrets.md).
+key_vault_name: rj-london

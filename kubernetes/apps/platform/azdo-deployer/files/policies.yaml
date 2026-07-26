@@ -1,0 +1,114 @@
+# What a namespace inherits by being a child of `dev`. Which namespaces the
+# deployer may create in the first place is files/namespace-fence.yaml
+# (documentation/infrastructure/azdo_agents.md).
+#
+# Kubernetes namespaces are flat, so "child" is a label -- `home.arpa/parent:
+# dev` -- and these rules do what a hierarchy controller would have. HNC was the
+# obvious candidate and is archived (kubernetes-retired, Apr 2025); running an
+# unmaintained webhook in front of every namespace operation is not a trade this
+# cluster should take. Child names are free-form: the label is the only thing
+# that makes one a child.
+#
+# Every rule here keys off that label alone, never off who created the
+# namespace. A child created by hand gets the same treatment, and -- unlike the
+# fence next door -- nothing here reads request.userInfo, which is what lets
+# `kyverno apply` evaluate this file in CI and lets the policy run with
+# `background: true` so generate honours synchronize and generateExisting.
+#
+# failurePolicy: Fail, matching kubernetes/apps/security/kyverno-policies.
+#
+# JMESPath, never CEL: the kyverno chart enables
+# generateValidatingAdmissionPolicy, and a promoted policy reports to the
+# API-server audit log instead of the PolicyReports these exist to populate.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: azdo-child-namespace-defaults
+  annotations:
+    policies.kyverno.io/description: >-
+      Namespaces parented to dev get a PSA label, the azdo-deployer RoleBinding
+      and a memory ceiling.
+spec:
+  background: true
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    # Mutation runs before validation, so this is what lets a pipeline create a
+    # namespace without knowing require-namespace-psa-label exists. The +()
+    # anchor adds the label only when absent: a child that declares `restricted`
+    # keeps it, and one that declares `privileged` is still rejected by
+    # kyverno-policies rather than silently downgraded here.
+    - name: default-psa-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              selector:
+                matchLabels:
+                  home.arpa/parent: dev
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              +(pod-security.kubernetes.io/enforce): baseline
+
+    # The propagation a hierarchy controller would have done. synchronize keeps
+    # it healed against edits and deletes; generateExisting covers children that
+    # predate a change to this rule.
+    #
+    # Kyverno's background controller needs its own permission to create these
+    # kinds -- see backgroundController.rbac.clusterRole.extraResources in
+    # kubernetes/apps/security/kyverno/values.yaml. Without it the rule reports
+    # success and produces nothing.
+    - name: grant-deployer-in-children
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              selector:
+                matchLabels:
+                  home.arpa/parent: dev
+      generate:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        name: azdo-deployer
+        namespace: "{{ request.object.metadata.name }}"
+        synchronize: true
+        generateExisting: true
+        data:
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: azdo-deployer
+          subjects:
+            - kind: ServiceAccount
+              name: azdo-deployer
+              namespace: azdo-system
+
+    # platform-limits cannot reach these namespaces: it is a static list synced
+    # at wave 3, and a child is created months later by a pipeline. The value
+    # must stay equal to that app's defaultMaxMemory.
+    - name: memory-ceiling-in-children
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              selector:
+                matchLabels:
+                  home.arpa/parent: dev
+      generate:
+        apiVersion: v1
+        kind: LimitRange
+        name: memory-ceiling
+        namespace: "{{ request.object.metadata.name }}"
+        synchronize: true
+        generateExisting: true
+        data:
+          spec:
+            limits:
+              - type: Container
+                max:
+                  memory: 4Gi

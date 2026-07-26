@@ -8,8 +8,12 @@
 # this is swapped. FW-013 is what permits .4/.5 to query a public resolver
 # directly -- VLAN 11 carries no equivalent allow, which is why the Talos nodes
 # cannot be bootstrapped this way and DNS must exist before 30-talos.
+#
+# Gated because that allow is source-scoped: see bootstrap_swap_resolver in
+# defaults.
 - name: Point resolv.conf at the bootstrap resolver
   ansible.builtin.raw: printf 'nameserver %s\n' '{{ bootstrap_resolver }}' > /etc/resolv.conf
+  when: bootstrap_swap_resolver
   changed_when: false
 
 - name: Ensure a Python interpreter is present

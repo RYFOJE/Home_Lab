@@ -1,0 +1,91 @@
+# Which namespaces the Azure DevOps deployer may create and delete. The other
+# half of the dev namespace family -- what a child inherits -- is
+# files/policies.yaml (documentation/infrastructure/azdo_agents.md).
+#
+# Separate file, and the split is forced twice over:
+#
+#   1. Engine. These rules match on `subjects`, which reads request.userInfo,
+#      and Kyverno cannot evaluate that during background scans -- so they must
+#      set `background: false`. The generate rules next door need the background
+#      controller to honour synchronize and generateExisting. One policy cannot
+#      be both, so they were already two policies.
+#   2. CI. `kyverno apply` supplies no requester, and with none the CLI treats a
+#      subject-matched rule as matching every request -- this file evaluated
+#      against the rendered manifests fails on namespaces no pipeline will ever
+#      touch (Namespace/cilium-secrets among them). So
+#      .github/workflows/cluster-policy-check.yml feeds it the other file only,
+#      and this one is not engine-checked there. A schema error here therefore
+#      surfaces as a failed sync at wave 2 rather than a red PR.
+#
+# failurePolicy: Fail, matching kubernetes/apps/security/kyverno-policies.
+# Fail-closed is what makes the deployer's cluster-scoped namespace grant safe:
+# a Kyverno outage denies the create rather than unfencing it.
+#
+# JMESPath, never CEL: the kyverno chart enables
+# generateValidatingAdmissionPolicy, and a promoted policy reports to the
+# API-server audit log instead of the PolicyReports these exist to populate.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: azdo-namespace-family
+  annotations:
+    policies.kyverno.io/description: >-
+      The Azure DevOps deployer may only create and delete namespaces that
+      declare themselves children of dev.
+spec:
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    # The boundary RBAC cannot express. `create` on namespaces is cluster-wide
+    # by definition -- there is no namespaced form of it -- so the constraint on
+    # WHICH namespaces has to live at admission. Same role cluster-secrets'
+    # keys-carry-namespace-prefix plays for Key Vault.
+    - name: children-declare-their-parent
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              operations:
+                - CREATE
+            subjects:
+              - kind: ServiceAccount
+                name: azdo-deployer
+                namespace: azdo-system
+      validate:
+        failureAction: Enforce
+        message: >-
+          The azdo-deployer ServiceAccount may only create namespaces labelled
+          home.arpa/parent=dev.
+        pattern:
+          metadata:
+            labels:
+              home.arpa/parent: dev
+
+    # Deletion is checked against oldObject: request.object is null on DELETE,
+    # so the pattern above would match nothing and permit everything.
+    - name: only-children-may-be-deleted
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              operations:
+                - DELETE
+            subjects:
+              - kind: ServiceAccount
+                name: azdo-deployer
+                namespace: azdo-system
+      validate:
+        failureAction: Enforce
+        message: >-
+          The azdo-deployer ServiceAccount may only delete namespaces labelled
+          home.arpa/parent=dev.
+        deny:
+          conditions:
+            any:
+              - key: >-
+                  {{ not_null(request.oldObject.metadata.labels."home.arpa/parent", 'unset') }}
+                operator: NotEquals
+                value: dev

@@ -14,14 +14,16 @@
 # the ArgoCD admin hash and the ESO service principal. Both values are equally
 # sensitive wherever they sit: they are already in Terraform state in the
 # clear, which is why the state backend is the thing to protect first
-# (documentation/infrastructure/disaster_recovery.md, "State durability").
+# (documentation/infrastructure/disaster_recovery.md, "State backend hardening").
 #
-# These are copies for humans, not inputs: no layer reads them back, and
-# downstream layers keep consuming the kubeconfig through terraform_remote_state
-# exactly as before.
+# Not inputs to any Terraform layer: downstream layers keep consuming the
+# kubeconfig through terraform_remote_state exactly as before. The kubeconfig
+# does have one automated reader outside Terraform -- ansible/azdo-agent.yml
+# uses it for a single `kubectl get secret` on the control node
+# (documentation/infrastructure/azdo_agents.md). talosconfig has none.
 #
 # Unprefixed names: the `<namespace>--<name>` convention applies to secrets ESO
-# syncs into the cluster. These are never synced -- reading them is a
+# syncs into the cluster. These are never synced -- reading them is otherwise a
 # break-glass action performed by an operator with `az keyvault secret show`.
 
 provider "azurerm" {

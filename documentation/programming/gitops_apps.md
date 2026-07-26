@@ -34,7 +34,10 @@ set (the registry template renders `path: kubernetes/apps/{{ .group }}/{{
 .name }}`), push. The registry entry also sets the destination namespace,
 sync wave, which injected parameters the app receives (`needsDomain`,
 `needsTenant`, `needsVaultUrl`), an optional edge-mode gate (`onlyEdgeMode`),
-an optional `project`, and any extra sync options. Future candidates follow the
+an optional `project`, an optional `ignoreDifferences` — for fields a controller
+populates on an object the app declares, which would otherwise leave it
+permanently `OutOfSync` and, since `selfHeal` is on for every app here, looping
+against that controller — and any extra sync options. Future candidates follow the
 same pattern (for example `authentik/`, `harbor/`, `open-webui/`, or migrations
 of the Terraform-managed `cert-manager`/`longhorn`).
 

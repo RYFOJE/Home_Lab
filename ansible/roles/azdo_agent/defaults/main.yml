@@ -1,0 +1,46 @@
+---
+# The agent tarball URL carries the version, so unlike Technitium this is pinned
+# at install time. The assertion after install is still the load-bearing part:
+# Azure DevOps upgrades an agent in place when the server requires a newer one,
+# so a failed assertion is the signal to repin, not a fault
+# (documentation/infrastructure/upgrades.md).
+# renovate: datasource=github-releases depName=microsoft/azure-pipelines-agent extractVersion=^v(?<version>.+)$
+azdo_agent_version: "5.275.0"
+
+# vstsagentpackage.azureedge.net was retired with Edgio; this is the current
+# distribution host.
+azdo_agent_tarball_url: >-
+  https://download.agent.dev.azure.com/agent/{{ azdo_agent_version }}/vsts-agent-linux-x64-{{ azdo_agent_version }}.tar.gz
+
+azdo_agent_home: /opt/azdo-agent
+azdo_agent_work: /opt/azdo-agent/_work
+azdo_agent_user: azdo
+azdo_agent_group: azdo
+
+# Tracks the cluster's control plane (terraform/30-talos/terraform.tfvars).
+# kubectl supports one minor of skew, so this moves with a Kubernetes upgrade
+# (documentation/infrastructure/upgrades.md).
+# renovate: datasource=github-releases depName=kubernetes/kubernetes
+azdo_agent_kubectl_version: "v1.36.2"
+azdo_agent_kubectl_url: >-
+  https://dl.k8s.io/release/{{ azdo_agent_kubectl_version }}/bin/linux/amd64/kubectl
+
+# Tracks the pin in .github/workflows/cluster-policy-check.yml so an agent
+# renders a chart with the helm CI validated it with.
+# renovate: datasource=github-releases depName=helm/helm
+azdo_agent_helm_version: "v3.21.3"
+azdo_agent_helm_url: >-
+  https://get.helm.sh/helm-{{ azdo_agent_helm_version }}-linux-amd64.tar.gz
+
+# renovate: datasource=github-releases depName=mikefarah/yq
+azdo_agent_yq_version: "v4.53.3"
+azdo_agent_yq_url: >-
+  https://github.com/mikefarah/yq/releases/download/{{ azdo_agent_yq_version }}/yq_linux_amd64
+
+# The namespace the agent's kubeconfig defaults to and the one the identity
+# check runs against. Its children are created at pipeline time and are not
+# known here (kubernetes/apps/platform/azdo-deployer).
+azdo_agent_parent_namespace: dev
+
+azdo_agent_pool: default
+azdo_agent_no_log: true

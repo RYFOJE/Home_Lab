@@ -1,0 +1,5 @@
+apiVersion: v2
+name: azdo-deployer
+description: The identity the self-hosted Azure DevOps agents deploy as -- a ServiceAccount, its namespace-scoped permissions, the dev parent namespace, and the Kyverno rules that make a namespace a child of it. Plain templates, no upstream chart.
+type: application
+version: 0.1.0

@@ -24,6 +24,12 @@ namespaces:
   - name: keda
   - name: cnpg-system
   - name: databases
+  - name: azdo-system
+  # The parent only. Its children are created by pipelines long after this app
+  # syncs, so their ceiling is generated instead
+  # (kubernetes/apps/platform/azdo-deployer/files/policies.yaml) -- and the two
+  # values have to agree.
+  - name: dev
 
   # Terraform-owned.
   - name: argocd

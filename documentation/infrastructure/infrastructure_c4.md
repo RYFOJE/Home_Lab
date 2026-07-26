@@ -24,6 +24,9 @@ Deployment_Node(home, "Portfolio Home Network", "Physical Location"){
         Deployment_Node(core_infra1, "core-infra-1", "Debian 12 LXC"){
             Container(core_infra1_c, "DNS + NTP (Primary)", "Technitium + chrony", "Primary authoritative DNS for home.arpa; internal NTP source")
         }
+        Deployment_Node(azdo1, "azdo-agent-1", "Debian 12 LXC"){
+            Container(azdo1_c, "Azure DevOps Agent", "azure-pipelines-agent + kubectl + helm", "Deploys charts as the azdo-deployer ServiceAccount; no container runtime - builds run on Microsoft-hosted agents")
+        }
     }
 
     Deployment_Node(pve2, "Proxmox Node 2", "Dell OptiPlex 5060"){
@@ -41,6 +44,9 @@ Deployment_Node(home, "Portfolio Home Network", "Physical Location"){
         Deployment_Node(k8s3, "k8s-node-3", "Talos Linux VM"){
             Container(k8s3_c, "Talos Node", "Control-plane + Worker", "Combined role: part of etcd quorum, also schedules workloads")
         }
+        Deployment_Node(azdo2, "azdo-agent-2", "Debian 12 LXC"){
+            Container(azdo2_c, "Azure DevOps Agent", "azure-pipelines-agent + kubectl + helm", "Second agent; split from azdo-agent-1 so one host reboot does not stop every pipeline")
+        }
     }
 
     Deployment_Node(pbs, "Proxmox Backup Server", "Physical Server"){
@@ -54,6 +60,9 @@ Rel(switch_c, pve1_hv, "Connects", "Ethernet")
 Rel(switch_c, pve2_hv, "Connects", "Ethernet")
 Rel(switch_c, pve3_hv, "Connects", "Ethernet")
 Rel(switch_c, pbs_sw, "Connects", "Ethernet")
+
+Rel(azdo1_c, k8s1_c, "kube API 6443 via the VIP", "TCP")
+Rel(azdo2_c, k8s3_c, "kube API 6443 via the VIP", "TCP")
 
 Rel(k8s1_c, k8s2_c, "etcd/API quorum", "TCP")
 Rel(k8s2_c, k8s3_c, "etcd/API quorum", "TCP")

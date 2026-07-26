@@ -18,6 +18,8 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 | DNS + NTP (core-infra-1, Primary) | LXC (on pve1) | VLAN 10 | Shared | 10.0.10.4 | Primary Technitium DNS (authoritative for `home.arpa`, recursive resolver) + chrony (internal NTP source) |
 | DNS + NTP (core-infra-2, Secondary) | LXC (on pve2) | VLAN 10 | Shared | 10.0.10.5 | Secondary Technitium DNS (zone transfer from primary) + independent chrony instance |
 | Wireless Access Point (mgmt) | Network Device | VLAN 10 | Shared | 10.0.10.6 | AP management interface; broadcasts SSIDs for VLANs 10, 13, 15 (see `wifi_and_isolation.md`) |
+| Azure DevOps agent (azdo-agent-1) | LXC (on pve1) | VLAN 10 | Shared | 10.0.10.7 | Self-hosted Azure Pipelines deployment agent; outbound-only, deploys into the cluster's `dev` namespace family (see `../infrastructure/azdo_agents.md`) |
+| Azure DevOps agent (azdo-agent-2) | LXC (on pve3) | VLAN 10 | Shared | 10.0.10.8 | Second agent, split across hosts so one Proxmox reboot does not stop every pipeline |
 | pve1 (mgmt) | Hypervisor Host | VLAN 10 | Shared | 10.0.10.11 | Shared hypervisor - hosts VMs for multiple projects |
 | pve2 (mgmt) | Hypervisor Host | VLAN 10 | Shared | 10.0.10.12 | Shared hypervisor - hosts VMs for multiple projects |
 | pve3 (mgmt) | Hypervisor Host | VLAN 10 | Shared | 10.0.10.13 | Shared hypervisor - hosts VMs for multiple projects |
@@ -104,6 +106,14 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 - **VLAN 15 (IoT) keeps untrusted firmware off VLAN 13:** smart-home devices get internet and
   internal DNS (so blocklists apply) and nothing else - unlike trusted devices, they cannot
   reach published apps or the kube API.
+- **The Azure DevOps agents are LXCs on VLAN 10, not pods:** they deploy *to* the cluster, so
+  they must not depend on it being healthy - an agent that cannot run while the cluster is
+  broken cannot be used to fix it. VLAN 10 because that VLAN already reaches the kube API
+  (FW-003) and the LB pool (FW-004); no rule was added for them. They need no container
+  runtime, since builds run on Microsoft-hosted agents, which is what keeps them plain
+  unprivileged containers with no nesting. Split across pve1 and pve3 so a Proxmox host reboot
+  - which already costs a k8s node - does not also stop every pipeline. Design in
+  `../infrastructure/azdo_agents.md`.
 - **Wi-Fi carries VLANs 10, 13, 15 (one SSID each); VLANs 11/12 are wired-only.** SSID
   mapping and AP config in `wifi_and_isolation.md`.
 - **DNS/NTP placement and redundancy:** runs as two LXCs on VLAN 10 (shared infra), not inside

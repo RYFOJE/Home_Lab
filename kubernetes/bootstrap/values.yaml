@@ -30,6 +30,11 @@ revision: main
 #   createNamespace  ArgoCD creates the namespace (one owner per namespace)
 #   namespaceLabels  labels applied to that namespace (PSA enforcement)
 #   extraSyncOptions appended to the default syncOptions
+#   ignoreDifferences  passed through to spec.ignoreDifferences, for fields a
+#                    controller populates on an object this repo declares (a
+#                    ServiceAccount token Secret). Without it the app is
+#                    permanently OutOfSync and selfHeal, which is on for every
+#                    app here, re-syncs in a loop against that controller
 apps:
   # The platform-* PriorityClasses the apps below name are NOT here: they are
   # Terraform-owned (40-kube-networking/scheduling.tf). No wave is early enough
@@ -188,6 +193,29 @@ apps:
     group: monitoring
     namespace: monitoring
     wave: "1"
+
+  # The identity the self-hosted Azure DevOps agents deploy as, the dev parent
+  # namespace, and the Kyverno rules that make a namespace a child of it
+  # (documentation/infrastructure/azdo_agents.md). Nothing in the cluster
+  # depends on it -- but platform-limits at wave 3 writes a LimitRange into
+  # both namespaces this app owns, and a LimitRange cannot precede its
+  # namespace.
+  - name: azdo-deployer
+    group: platform
+    namespace: azdo-system
+    wave: "2"
+    createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: restricted
+    ignoreDifferences:
+      # The token controller populates data.token/ca.crt/namespace on a Secret
+      # whose manifest declares no data at all.
+      - group: ""
+        kind: Secret
+        name: azdo-deployer-token
+        namespace: azdo-system
+        jsonPointers:
+          - /data
 
   # -- wave 3: per-namespace memory ceilings. Last, because a LimitRange
   #    cannot be created into a namespace that does not exist yet and this app

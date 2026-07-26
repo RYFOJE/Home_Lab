@@ -20,3 +20,11 @@ all:
           hosts:
             core-infra-2:
               ansible_host: 10.0.10.5
+    # Independent of each other and of the group above -- no serial, no order.
+    # Host names are also the agent names in the Azure DevOps pool.
+    azdo_agents:
+      hosts:
+        azdo-agent-1:
+          ansible_host: 10.0.10.7
+        azdo-agent-2:
+          ansible_host: 10.0.10.8
