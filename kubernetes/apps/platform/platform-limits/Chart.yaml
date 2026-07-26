@@ -1,0 +1,5 @@
+apiVersion: v2
+name: platform-limits
+description: Per-namespace memory ceilings (LimitRange) for every namespace this repo owns. Last wave in the registry, because a LimitRange needs its namespace to exist first and this app owns none of them. Plain templates, no upstream chart.
+type: application
+version: 0.1.0

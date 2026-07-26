@@ -1,4 +1,9 @@
 tempo:
+  # Same reasoning as loki: trace ingestion is the recoverable part of the
+  # stack, so it sits below the default priority and never preempts
+  # (terraform/40-kube-networking/scheduling.tf).
+  priorityClassName: platform-bulk
+
   tempo:
     retention: 168h # 7d
     storage:

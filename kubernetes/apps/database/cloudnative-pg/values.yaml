@@ -23,6 +23,10 @@
 #     `helm template cloudnative-pg --include-crds` on a chart bump.
 
 cloudnative-pg:
+  # Its webhooks are in the admission path for every Cluster write, and it is
+  # what performs failover (terraform/40-kube-networking/scheduling.tf).
+  priorityClassName: platform-critical
+
   # Two replicas behind leader election. The validating/mutating webhooks are
   # in the admission path for every Cluster/Backup write, so a single-replica
   # rollout makes those writes fail for the length of the restart -- the same

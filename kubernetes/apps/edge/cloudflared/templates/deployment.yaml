@@ -24,6 +24,9 @@ spec:
       labels:
         app: cloudflared
     spec:
+      # The only path public traffic takes into the cluster
+      # (terraform/40-kube-networking/scheduling.tf).
+      priorityClassName: platform-critical
       # Default SA carries no permissions; keep its token out of the pod too.
       automountServiceAccountToken: false
       affinity:

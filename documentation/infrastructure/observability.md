@@ -15,6 +15,7 @@ and traces in one Grafana, alerts to Discord. Deployed via GitOps
 | `alloy-logs` | `monitoring-system` | DaemonSet tailing `/var/log/pods` on every node into Loki |
 | `alloy-gateway` | `monitoring` | OTLP gateway ×2 for application telemetry |
 | `kyverno-monitoring` | `kyverno` | One ServiceMonitor over all four Kyverno controllers' `*-metrics` Services, plus the alerts below. Its own app, not part of `kyverno` — that one is wave `-2`, before the `monitoring.coreos.com` CRDs exist (`programming/gitops_apps.md`). The Grafana dashboard for these metrics stays in the `kyverno` app (`grafana.enabled`): a ConfigMap, not a CRD-backed kind |
+| `infra-monitoring` | `monitoring` | ServiceMonitors and alerts for the six platform components that cannot carry their own — see below |
 
 Grafana is published at `grafana.<domain>` behind `traefik-internal`
 (LAN-only, wildcard cert — `programming/publishing_apps.md`). The Technitium
@@ -90,6 +91,48 @@ come from the instance. Both carry the same `absent()` guard as the Kyverno
 rules above, for the same reason. Volume fullness is left to
 kube-prometheus-stack's default `KubePersistentVolumeFillingUp`
 (`databases.md`).
+
+## Platform components (`infra-monitoring`)
+
+Cilium, cert-manager, Longhorn, Traefik and ArgoCD are installed by Terraform
+(layers 40 and 60), and External Secrets is a GitOps app at wave `-2`. In every
+one of those cases the `monitoring.coreos.com` CRDs do not exist at the moment
+the component installs, so its chart's own `serviceMonitor` flag cannot be
+used: at layer 40 it fails the apply, and at wave `-2` it stalls the root app
+before the wave that installs the CRD. What each chart *can* do at install time
+is expose the metrics endpoint and its Service, which is what
+`values/cilium.yaml`, the ESO app's `metrics.service.enabled` and Traefik's
+`metrics.prometheus.service.enabled` do.
+
+The ServiceMonitors that scrape them live in `infra-monitoring` at wave `1`,
+the same split `kyverno-monitoring` uses and for the same reason. Selectors are
+on labels the charts set unconditionally, never on
+`app.kubernetes.io/instance` — that one is also ArgoCD's tracking label, so it
+is owned by two things at once.
+
+Alerts in the same app, grouped by what they catch:
+
+- **cert-manager** — `CertManagerCertExpiringSoon` is the one that matters
+  most. A single wildcard certificate fronts every published hostname on both
+  Traefik instances and renews unattended over ACME DNS-01; before this rule
+  existed a renewal that stopped working produced no signal at all until the
+  certificate expired and the whole public edge broke TLS. It fires at 21 days
+  remaining, nine days after cert-manager should have renewed, so it means
+  renewal is failing rather than pending.
+- **Longhorn** — volume faulted (no usable replica), volume degraded for 30m
+  (not rebuilding), node not ready.
+- **ArgoCD** — an app out of sync or unhealthy for 30m. With automated sync and
+  self-heal on, 30m means syncing is failing, commonly a project permission or
+  an admission denial.
+- **External Secrets** — an `ExternalSecret` not Ready. The existing Secret
+  keeps its last-synced value, so nothing breaks immediately; the symptom is a
+  credential going stale, which several weeks later becomes the cert-manager
+  alert above.
+- **Traefik and Cilium** — read from kube-state-metrics rather than from the
+  component, because one that is not running exports nothing.
+
+Every expression that could lose its series carries an `absent()` arm, for the
+same reason the Kyverno and PostgreSQL rules do.
 
 ## Talos scrape disables
 

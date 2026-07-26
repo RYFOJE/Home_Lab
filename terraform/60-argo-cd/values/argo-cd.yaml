@@ -1,0 +1,103 @@
+# ArgoCD values. Read by argocd.tf via file() and rendered by
+# scripts/check_cluster_policy.py against the pinned chart version in CI, so a
+# bump that moves or removes a key fails on the PR instead of being silently
+# dropped at apply. The argo-cd chart ships no values.schema.json, which is
+# exactly why that render matters: an unknown key here produces no error, just
+# a setting that never takes effect.
+#
+# The admin password hash and the Ingress hostname are injected by argocd.tf
+# (both come from Key Vault); values/argo-cd.check.yaml stands in for them in
+# CI.
+
+configs:
+  params:
+    # This is where the flag lives -- NOT `server.insecure` one level up, which
+    # the chart does not read at all. Set there, it renders no
+    # argocd-cmd-params-cm entry and no --insecure arg, argocd-server keeps its
+    # own TLS on 8080, and Traefik (which has already terminated TLS) gets a
+    # 307 back to https: the redirect loop this setting exists to prevent.
+    server.insecure: true
+
+server:
+  ingress:
+    enabled: true
+    ingressClassName: traefik-internal
+    tls: true
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  metrics:
+    enabled: true
+
+# HA: sharding across 2 controller pods (not active/active -- each shard owns a
+# subset of managed clusters), 2 repo-server pods, and redis-ha
+# (Sentinel-backed, 3 pods) replacing the single redis pod. 3 nodes total
+# (30-talos), hardAntiAffinity spreads redis-ha 1/node.
+controller:
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  metrics:
+    enabled: true
+
+repoServer:
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  metrics:
+    enabled: true
+
+redis:
+  enabled: false
+
+redis-ha:
+  enabled: true
+  hardAntiAffinity: true
+  haproxy:
+    enabled: true
+  redis:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+# ArgoCD is how everything else in the cluster gets deployed and healed, so it
+# outranks the workloads it manages under node pressure
+# (40-kube-networking/scheduling.tf).
+#
+# That class is Terraform-owned rather than a GitOps app for this line's sake:
+# a pod naming a PriorityClass that does not exist is rejected at admission, so
+# a class ArgoCD created could never admit the release that installs ArgoCD.
+# 40-kube-networking is already a prerequisite of this layer (traefik-internal
+# and the wildcard cert), and this is a third reason it has to precede it.
+global:
+  priorityClassName: platform-critical
+
+# metrics.enabled above creates the three metrics Services. The ServiceMonitors
+# that scrape them, and the app-health alerts, live in the GitOps app
+# kubernetes/apps/monitoring/infra-monitoring: the monitoring.coreos.com CRDs
+# do not exist when this layer applies on a fresh build, so a serviceMonitor
+# here would fail. Same split as cilium/cert-manager/longhorn in layer 40.

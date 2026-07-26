@@ -1,0 +1,37 @@
+# Namespaces this repo owns, and the per-container memory ceiling each gets.
+#
+# Wave 3 -- after every namespace-owning app. A LimitRange cannot be created
+# into a namespace that does not exist yet, and this app owns none of them.
+#
+# The list is explicit rather than derived. It has to be: the namespaces come
+# from two places (the bootstrap registry and the Terraform layers), and a
+# LimitRange landing in a namespace nobody expected is worse than one missing.
+# Adding a namespace-owning app means adding a line here.
+
+# 4Gi covers every container in the cluster with headroom -- the largest limit
+# this repo sets is Prometheus at 2Gi. A container asking for more than this is
+# a mistake, which is the point.
+defaultMaxMemory: 4Gi
+
+namespaces:
+  # ArgoCD-owned (kubernetes/bootstrap/values.yaml).
+  - name: platform-system
+  - name: external-secrets
+  - name: kyverno
+  - name: cloudflared
+  - name: monitoring
+  - name: monitoring-system
+  - name: keda
+  - name: cnpg-system
+  - name: databases
+
+  # Terraform-owned.
+  - name: argocd
+  - name: cert-manager
+  - name: traefik-external
+  - name: traefik-internal
+
+  # Longhorn's instance managers size themselves against the node and are the
+  # one workload here that legitimately climbs past the shared ceiling.
+  - name: longhorn-system
+    maxMemory: 8Gi

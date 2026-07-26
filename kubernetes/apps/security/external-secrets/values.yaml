@@ -2,4 +2,25 @@
 # enabled). The Azure credential it authenticates with is the Terraform-created
 # azure-kv-creds Secret in this namespace (60-argo-cd gitops.tf), referenced by
 # the ClusterSecretStore in kubernetes/apps/security/cluster-secrets.
-external-secrets: {}
+external-secrets:
+  # Every in-cluster secret arrives through this controller, so a stalled sync
+  # is a credential quietly going stale -- including the Cloudflare token
+  # cert-manager renews the wildcard certificate with. The metrics Service is
+  # off by chart default; without it there is nothing for a ServiceMonitor to
+  # select.
+  #
+  # No serviceMonitor here: this app is wave -2 and the monitoring.coreos.com
+  # CRDs arrive with kube-prometheus-stack at wave 0. The ServiceMonitor and
+  # the sync-failure alert live in kubernetes/apps/monitoring/infra-monitoring
+  # at wave 1 -- the same split kyverno-monitoring uses.
+  metrics:
+    service:
+      enabled: true
+
+  # A ConfigMap, not a CRD-backed kind, so the wave -2 constraint above does
+  # not apply: kube-prometheus-stack's Grafana sidecar picks it up from any
+  # namespace, same as the kyverno app's dashboard.
+  grafanaDashboard:
+    enabled: true
+
+  priorityClassName: platform-critical

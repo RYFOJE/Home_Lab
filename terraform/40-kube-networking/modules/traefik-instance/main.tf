@@ -34,55 +34,48 @@ resource "helm_release" "this" {
   version    = var.chart_version
   namespace  = kubernetes_namespace.this.metadata[0].name
 
-  # All instances ship identical CRDs; only the designated one installs them.
-  skip_crds = !var.install_crds
+  # CRDs come from the separate traefik-crds release (traefik.tf). Helm never
+  # upgrades anything in a chart's crds/ directory on `helm upgrade`, so the
+  # bundled copy would install once and then diverge from the chart on every
+  # later bump. Both instances skip them.
+  skip_crds = true
 
-  values = [yamlencode({
-    service = {
-      annotations = { "lbipam.cilium.io/ips" = var.lb_ip }
-      # Preserve client source IPs (access logs, allowlist middlewares).
-      spec = { externalTrafficPolicy = "Local" }
-    }
-    ingressClass = {
-      enabled        = true
-      isDefaultClass = false
-      name           = local.ingress_class
-    }
-    providers = {
-      # Each instance watches only its own class -- routes never leak between
-      # the internal and external entry points.
-      kubernetesCRD     = { ingressClass = local.ingress_class }
-      kubernetesIngress = { ingressClass = local.ingress_class }
-    }
-    ports = merge(
+  # Longhorn-sized installs are not the issue here, but the 300s provider
+  # default is short enough that a first apply on a cold node (image pull plus
+  # LB IP assignment) can time out and leave a partial release behind.
+  timeout = 600
+
+  # Everything shared by both instances lives in values/traefik.yaml, which CI
+  # renders against the chart's schema before merge. Only the values that
+  # genuinely differ per instance are built here.
+  values = [
+    var.base_values,
+    yamlencode(merge(
       {
-        web = merge(
-          {
-            redirections = {
-              entryPoint = { to = "websecure", scheme = "https", permanent = true }
-            }
-          },
-          # Trust client-IP headers only from the declared upstream proxies
-          # (Cloudflare edge / cloudflared pod); see traefik.tf.
-          length(local.trusted_ips) > 0
-          ? { forwardedHeaders = { trustedIPs = local.trusted_ips } } : {}
-        )
+        service = {
+          annotations = { "lbipam.cilium.io/ips" = var.lb_ip }
+        }
+        ingressClass = {
+          name = local.ingress_class
+        }
+        providers = {
+          # Each instance watches only its own class -- routes never leak
+          # between the internal and external entry points.
+          kubernetesCRD     = { ingressClass = local.ingress_class }
+          kubernetesIngress = { ingressClass = local.ingress_class }
+        }
       },
-      length(local.trusted_ips) > 0
-      ? { websecure = { forwardedHeaders = { trustedIPs = local.trusted_ips } } } : {}
-    )
-    # Serve the wildcard cert for any TLS route with no explicit cert.
-    tlsStore = {
-      default = { defaultCertificate = { secretName = "wildcard-tls" } }
-    }
-    ingressRoute = {
-      dashboard = { enabled = false }
-    }
-    resources = {
-      requests = { cpu = "100m", memory = "128Mi" }
-      limits   = { memory = "256Mi" }
-    }
-  })]
+      # Trust client-IP headers only from the declared upstream proxies
+      # (Cloudflare edge / cloudflared pod); see traefik.tf. Empty list =
+      # feature off, and no `forwardedHeaders` key is emitted at all.
+      length(local.trusted_ips) > 0 ? {
+        ports = {
+          web       = { forwardedHeaders = { trustedIPs = local.trusted_ips } }
+          websecure = { forwardedHeaders = { trustedIPs = local.trusted_ips } }
+        }
+      } : {}
+    )),
+  ]
 }
 
 # Wildcard cert, one per namespace (Secrets are namespace-local).

@@ -5,7 +5,7 @@
 # external Traefik namespace likewise comes from 40-kube-networking's state.
 
 variable "key_vault_name" {
-  description = "Name of the Azure Key Vault holding this layer's secrets (cloudflare-dns-api-token, cloudflare-account-id, public-domain)."
+  description = "Name of the Azure Key Vault holding this layer's secrets (cert-manager--cloudflare-dns-api-token, cloudflare-account-id, public-domain)."
   type        = string
 }
 

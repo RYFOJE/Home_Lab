@@ -3,6 +3,7 @@
 alloy:
   controller:
     type: daemonset
+    priorityClassName: platform-bulk
 
   alloy:
     resources:

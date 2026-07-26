@@ -19,6 +19,23 @@
       "matchStrings": [
         "#\\s*renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+KYVERNO_CLI_VERSION:\\s*(?<currentValue>\\S+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Image tags inside the vendored Multus/whereabouts manifests (terraform/40-kube-networking/manifests). No helm chart exists upstream, so these plain YAML copies were previously invisible to every manager and would have rotted silently. A PR here means the whole manifest needs re-vendoring, not just the tag -- see that directory's PROVENANCE.md.",
+      "managerFilePatterns": ["/^terraform/40-kube-networking/manifests/.+\\.yaml$/"],
+      "matchStrings": [
+        "image:\\s*(?<depName>ghcr\\.io/k8snetworkplumbingwg/[^:\\s]+):(?<currentValue>[^\\s]+)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The vendored manifests need a human to re-copy the upstream file, so their PRs are a notification rather than a change to merge. Kept separate from the chart bumps so they are not mistaken for one.",
+      "matchFileNames": ["terraform/40-kube-networking/manifests/**"],
+      "addLabels": ["needs-manual-revendor"],
+      "automerge": false
     }
   ]
 }

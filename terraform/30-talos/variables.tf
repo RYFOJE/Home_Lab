@@ -8,6 +8,16 @@ variable "cluster_name" {
   type        = string
 }
 
+variable "kubernetes_version" {
+  description = "Kubernetes version for the control plane. Pinned explicitly: unset, the talos provider substitutes whatever default its own build carries, so a provider patch bump would move the control-plane version with nothing in the diff naming it."
+  type        = string
+}
+
+variable "longhorn_v2_data_engine" {
+  description = "Enable the Longhorn v2 data engine (SPDK / NVMe-over-TCP). Owned here because the prerequisites are node-level: 1024 hugepages (2 GiB of RAM per node, unavailable for anything else once reserved) and three kernel modules. 40-kube-networking reads this through remote state for the Longhorn chart, so the switch and its prerequisites cannot disagree. Enabling it reboots nodes."
+  type        = bool
+}
+
 variable "cluster_vip" {
   description = "Control-plane virtual IP (Talos native VIP, replaces kube-vip). Kube API served here on :6443. Must be free in VLAN 11."
   type        = string

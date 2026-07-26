@@ -1,0 +1,29 @@
+# CI-only placeholders for the values modules/traefik-instance merges on top of
+# values/traefik.yaml at apply time. Never read by Terraform.
+#
+# scripts/check_cluster_policy.py renders the chart with traefik.yaml AND this
+# file, so the schema check covers the whole value set rather than only the
+# static half. Keep the key set here matching the yamlencode block in
+# modules/traefik-instance/main.tf; the values themselves are stand-ins and
+# their content is irrelevant.
+service:
+  annotations:
+    lbipam.cilium.io/ips: "10.1.11.50"
+ingressClass:
+  name: traefik-check
+providers:
+  kubernetesCRD:
+    ingressClass: traefik-check
+  kubernetesIngress:
+    ingressClass: traefik-check
+ports:
+  web:
+    forwardedHeaders:
+      trustedIPs:
+        - 173.245.48.0/20
+        - 10.1.200.0/22
+  websecure:
+    forwardedHeaders:
+      trustedIPs:
+        - 173.245.48.0/20
+        - 10.1.200.0/22

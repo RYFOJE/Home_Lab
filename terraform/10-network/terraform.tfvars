@@ -385,11 +385,16 @@ firewall_rules = {
   }
 }
 
-# Public edge mode -- the single source of truth (50-cloudflare reads this via
-# remote state). "tunnel": cloudflared carries WAN traffic and the
-# port_forwards map below is forced to {} in main.tf; "dnat": the FW-017
-# forwards are live. Flip here, then apply 10-network followed by 50-cloudflare.
-edge_mode = "dnat" # flip to "tunnel" at cutover, after 50-cloudflare is verified
+# Public edge mode -- the single source of truth (50-cloudflare and 60-argo-cd
+# read this via remote state). "tunnel": cloudflared carries WAN traffic and
+# the port_forwards map below is forced to {} in main.tf, so the router
+# forwards nothing at all; "dnat": the FW-017 forwards below are live.
+#
+# Flipping is a three-layer apply, in order: 10-network (forwards and rules),
+# 50-cloudflare (public DNS records), 60-argo-cd (re-renders the root
+# Application's edgeMode parameter, which is what makes ArgoCD create or prune
+# the cloudflared connector app).
+edge_mode = "tunnel"
 
 # FW-017 (firewall_rules.yaml): the dnat-mode fallback WAN entry -- tcp 80/443
 # DNAT to the external Traefik instance (10.1.11.50, Cilium LB IPAM). 443

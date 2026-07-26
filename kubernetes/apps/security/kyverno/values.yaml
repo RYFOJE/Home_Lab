@@ -9,6 +9,13 @@
 # kubernetes/apps/monitoring/kyverno-monitoring carries them instead, at wave 1. The
 # per-controller *-metrics Services are created by the chart either way.
 kyverno:
+  # Every enforcing policy is fail-closed, so an evicted admission controller
+  # blocks admission cluster-wide -- it must outrank the workloads whose
+  # pressure would evict it (terraform/40-kube-networking/scheduling.tf).
+  # global covers all four controllers.
+  global:
+    priorityClassName: platform-critical
+
   admissionController:
     # 2 replicas: chart defaults auto-enable a PodDisruptionBudget
     # (minAvailable: 1) and spread pods across nodes via soft anti-affinity.

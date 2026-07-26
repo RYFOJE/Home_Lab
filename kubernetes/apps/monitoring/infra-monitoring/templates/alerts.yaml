@@ -1,0 +1,217 @@
+# Alerts for the platform layers that previously exported no metrics at all.
+# Auto-discovered by kube-prometheus-stack (ruleSelectorNilUsesHelmValues:
+# false) and routed through the default Alertmanager route -> discord receiver,
+# same as every other alert in this cluster
+# (../../../../documentation/infrastructure/observability.md).
+#
+# Every expression that could go quiet by losing its series carries an
+# absent() arm, for the same reason the Kyverno and PostgreSQL rules do: a
+# comparison over an empty vector returns no samples, so a bare threshold falls
+# silent during exactly the outage it exists to catch.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: infra
+spec:
+  groups:
+    - name: cert-manager
+      rules:
+        # The failure this cluster was most exposed to. One wildcard
+        # certificate fronts every published hostname on both Traefik
+        # instances, it renews unattended over ACME DNS-01, and until this rule
+        # existed a renewal that stopped working produced no signal until the
+        # certificate actually expired and the whole public edge broke TLS.
+        #
+        # 21 days: cert-manager starts renewing at 30 days remaining, so this
+        # fires only after renewal has had over a week to succeed and has not.
+        - alert: CertManagerCertExpiringSoon
+          expr: >-
+            certmanager_certificate_expiration_timestamp_seconds - time() < 21 * 24 * 3600
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            summary: Certificate {{`{{ $labels.namespace }}`}}/{{`{{ $labels.name }}`}} expires in under 21 days.
+            description: >-
+              Renewal begins at 30 days remaining, so this means renewal is
+              failing rather than pending. Check the Certificate's
+              CertificateRequest and Order -- DNS-01 depends on the Cloudflare
+              token ESO syncs and on the Technitium resolvers the solver is
+              pinned to (dns01RecursiveNameservers).
+        - alert: CertManagerCertNotReady
+          expr: >-
+            certmanager_certificate_ready_status{condition="True"} == 0
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: Certificate {{`{{ $labels.namespace }}`}}/{{`{{ $labels.name }}`}} is not Ready.
+            description: >-
+              Expected during a first build, where the wildcard cert cannot
+              issue until ESO has synced the Cloudflare token (layer 60). Not
+              expected afterwards.
+        # The rules above are per-certificate, so both go silent if
+        # cert-manager stops exporting -- which is also what happens if it
+        # stops running.
+        - alert: CertManagerDown
+          expr: absent(certmanager_certificate_ready_status)
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: cert-manager is exporting no certificate metrics.
+            description: >-
+              Every certificate-expiry alert in this group depends on these
+              series. Nothing is watching renewal while this fires.
+
+    - name: longhorn
+      rules:
+        # robustness: 0 unknown, 1 healthy, 2 degraded, 3 faulted.
+        - alert: LonghornVolumeFaulted
+          expr: longhorn_volume_robustness == 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Longhorn volume {{`{{ $labels.volume }}`}} is faulted.
+            description: >-
+              No usable replica remains. Restore it from the backup target
+              (infrastructure/disaster_recovery.md); the data is not coming
+              back on its own.
+        - alert: LonghornVolumeDegraded
+          expr: longhorn_volume_robustness == 2
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: Longhorn volume {{`{{ $labels.volume }}`}} has been degraded for 30m.
+            description: >-
+              Rebuilding after a node or disk event is normal and clears
+              itself; 30m without clearing means it is not rebuilding. The
+              PostgreSQL volumes are single-replica by design
+              (infrastructure/databases.md) and are expected to read degraded
+              only while their instance is being re-cloned.
+        - alert: LonghornNodeDown
+          expr: >-
+            longhorn_node_status{condition="ready"} == 0
+            or absent(longhorn_node_status{condition="ready"})
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Longhorn reports a node not ready.
+            description: >-
+              Every replica on that node is unavailable. Volumes with replicas
+              elsewhere degrade; the node-pinned PostgreSQL volume on it does
+              not come back until the node does.
+
+    - name: argocd
+      rules:
+        # GitOps drift was previously invisible: a child app could sit
+        # OutOfSync or Degraded indefinitely with nothing reporting it, which
+        # defeats the point of self-healing.
+        - alert: ArgoCDAppNotSynced
+          expr: argocd_app_info{sync_status!="Synced"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD application {{`{{ $labels.name }}`}} has been out of sync for 30m.
+            description: >-
+              Automated sync with selfHeal is on, so 30m means syncing is
+              failing rather than pending -- commonly a project permission
+              (a chart rendering a cluster-scoped kind missing from
+              clusterResourceWhitelist) or an admission denial.
+        - alert: ArgoCDAppUnhealthy
+          expr: argocd_app_info{health_status=~"Degraded|Missing"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD application {{`{{ $labels.name }}`}} is {{`{{ $labels.health_status }}`}}.
+        - alert: ArgoCDControllerDown
+          expr: absent(argocd_app_info)
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD application controller is exporting no metrics.
+            description: >-
+              Nothing is reconciling git into the cluster, and the two alerts
+              above are blind while this fires.
+
+    - name: external-secrets
+      rules:
+        # A failing sync does not remove the Secret already in the cluster, so
+        # the symptom is a credential silently going stale -- including the
+        # Cloudflare token the wildcard certificate renews with, which turns
+        # this into the cert-manager alerts above several weeks later.
+        - alert: ExternalSecretNotReady
+          expr: externalsecret_status_condition{condition="Ready", status="False"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: ExternalSecret {{`{{ $labels.namespace }}`}}/{{`{{ $labels.name }}`}} is not syncing.
+            description: >-
+              The existing Secret keeps its last-synced value, so nothing
+              breaks immediately. Check the Service Principal credential in
+              external-secrets and the key name against the namespace prefix
+              the Kyverno policy enforces.
+        - alert: ExternalSecretsDown
+          expr: absent(externalsecret_status_condition)
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: External Secrets Operator is exporting no metrics.
+
+    - name: traefik
+      rules:
+        # Read from kube-state-metrics rather than from Traefik: an instance
+        # with no running pod exports nothing, so the thing that notices cannot
+        # be the instance. Both instances are three replicas across three nodes
+        # (terraform/40-kube-networking/values/traefik.yaml), so zero available
+        # is a total loss of that entry point, not a rollout.
+        - alert: TraefikInstanceDown
+          expr: >-
+            kube_deployment_status_replicas_available{namespace=~"traefik-external|traefik-internal"} == 0
+            or absent(kube_deployment_status_replicas_available{namespace=~"traefik-external|traefik-internal"})
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: No available Traefik pods in {{`{{ $labels.namespace }}`}}.
+            description: >-
+              That entry point is serving nothing. For traefik-external this is
+              every published application, LAN and internet.
+        - alert: TraefikInstanceDegraded
+          expr: >-
+            kube_deployment_status_replicas_available{namespace=~"traefik-external|traefik-internal"}
+            < kube_deployment_spec_replicas{namespace=~"traefik-external|traefik-internal"}
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: Traefik in {{`{{ $labels.namespace }}`}} is below its replica count.
+            description: >-
+              Expected while a node is drained -- the LoadBalancer IP is
+              announced by a Cilium L2 lease and any remaining pod serves it.
+              Not expected otherwise.
+
+    - name: cilium
+      rules:
+        - alert: CiliumAgentDown
+          expr: >-
+            kube_daemonset_status_number_unavailable{namespace="kube-system", daemonset="cilium"} > 0
+            or absent(kube_daemonset_status_number_ready{namespace="kube-system", daemonset="cilium"})
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: A Cilium agent is unavailable.
+            description: >-
+              Cilium is CNI, kube-proxy replacement, NetworkPolicy enforcement
+              and LoadBalancer IPAM in one. A node without a ready agent
+              schedules no working pods and cannot hold an L2 announcement
+              lease.

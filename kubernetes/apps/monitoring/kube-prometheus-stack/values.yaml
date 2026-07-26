@@ -49,6 +49,10 @@ kube-prometheus-stack:
 
   prometheus:
     prometheusSpec:
+      # Alerting is the thing that tells you the cluster is under pressure, so
+      # it should not be the first casualty of it
+      # (terraform/40-kube-networking/scheduling.tf).
+      priorityClassName: platform-observability
       retention: 15d
       retentionSize: 22GB
       resources:
@@ -76,6 +80,7 @@ kube-prometheus-stack:
 
   alertmanager:
     alertmanagerSpec:
+      priorityClassName: platform-observability
       # ESO-synced Secret (templates/external-secrets.yaml, Key Vault
       # monitoring--discord-webhook-url); mounted by the operator at
       # /etc/alertmanager/secrets/alertmanager-discord/ so the webhook URL
@@ -113,6 +118,7 @@ kube-prometheus-stack:
         - name: deadletter
 
   grafana:
+    priorityClassName: platform-observability
     admin:
       # ESO-synced Secret (templates/external-secrets.yaml) from Key Vault
       # monitoring--grafana-admin-password.

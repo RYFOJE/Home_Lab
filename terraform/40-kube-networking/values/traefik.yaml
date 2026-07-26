@@ -1,0 +1,90 @@
+# Traefik values shared by both instances. Read by traefik.tf via file(),
+# passed into modules/traefik-instance as base_values, and rendered by
+# scripts/check_cluster_policy.py in CI together with values/traefik.check.yaml
+# -- one source of truth, so a chart bump that invalidates a key fails in CI
+# instead of at `terraform apply`. The Traefik chart ships a values.schema.json
+# with additionalProperties: false, which makes that check absolute.
+#
+# Per-instance values (lb_ip, ingressClass name, trusted proxy ranges) are
+# merged on top by the module; traefik.check.yaml stands in for them in CI.
+
+deployment:
+  # One per node. The public edge was a single pod, so any node event took all
+  # inbound traffic -- LAN and internet -- with it.
+  replicas: 3
+
+# Anti-affinity is `preferred`, not `required`: at 3 replicas on 3 nodes the
+# scheduler already places one per node, and `required` would deadlock every
+# rolling update (the surge pod has nowhere to land). The PDB is what protects
+# a drain; anti-affinity only has to bias placement.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+priorityClassName: platform-critical
+
+service:
+  spec:
+    # Cluster, not Local. Cilium documents L2 announcements as incompatible
+    # with externalTrafficPolicy: Local -- the ARP lease holder answers for the
+    # LB IP whether or not it runs a backend, so `Local` silently black-holes
+    # traffic whenever the announcing node has no Traefik pod. Client source
+    # IPs are preserved where it matters by forwardedHeaders.trustedIPs on the
+    # external instance (the module supplies the ranges); LAN traffic is SNATed
+    # to a node address, which is the accepted cost.
+    externalTrafficPolicy: Cluster
+
+ports:
+  web:
+    http:
+      redirections:
+        # `ports.web.http.redirections`, not `ports.web.redirections`: the
+        # chart's schema rejects the latter outright, so getting this wrong
+        # fails the release rather than the redirect.
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+metrics:
+  prometheus:
+    service:
+      # Dedicated metrics Service for the ServiceMonitor in the GitOps app
+      # kubernetes/apps/monitoring/infra-monitoring. No serviceMonitor here:
+      # this chart is installed by Terraform before the monitoring.coreos.com
+      # CRDs exist (values/cilium.yaml explains the split).
+      enabled: true
+
+# Serve the wildcard cert for any TLS route with no explicit cert.
+tlsStore:
+  default:
+    defaultCertificate:
+      secretName: wildcard-tls
+
+ingressRoute:
+  dashboard:
+    enabled: false
+
+ingressClass:
+  enabled: true
+  isDefaultClass: false
+
+# CRDs come from the separate traefik-crds release (traefik.tf), because Helm
+# never upgrades anything in a chart's crds/ directory on `helm upgrade` -- the
+# bundled copy would install once and then diverge from the chart forever.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi

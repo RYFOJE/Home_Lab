@@ -24,6 +24,12 @@ spec:
   # PodDisruptionBudget, so a node drain cannot take the quorum with it.
   enablePDB: true
 
+  # With dataDurability: required, an evicted standby is not a degraded
+  # replica, it is a write stall -- so the instances outrank the workloads
+  # whose pressure would evict them
+  # (terraform/40-kube-networking/scheduling.tf).
+  priorityClassName: platform-critical
+
   # One instance per node. `required` rather than `preferred`: two instances
   # sharing a node is not a degraded version of this topology, it is a node
   # whose failure takes two thirds of the cluster -- and with strict-local

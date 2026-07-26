@@ -1,0 +1,142 @@
+# ServiceMonitors for the platform components this repo installs outside the
+# GitOps waves that could carry them.
+#
+# Cilium, cert-manager, Longhorn and Traefik are installed by Terraform
+# (40-kube-networking) and ArgoCD by Terraform (60-argo-cd); External Secrets
+# is a GitOps app but at wave -2. In all six cases the monitoring.coreos.com
+# CRDs do not exist at the moment the component installs, so its chart's own
+# serviceMonitor flag cannot be used -- it would fail the apply on a fresh
+# build, and for the wave -2 app it would stall the root app before the wave
+# that installs the CRD. They all live here instead, at wave 1, which is the
+# same reason kyverno-monitoring exists.
+#
+# Everything is in the `monitoring` namespace with an explicit
+# namespaceSelector: Prometheus discovers ServiceMonitors in every namespace
+# (serviceMonitorSelectorNilUsesHelmValues: false), so where the object lives
+# is a filing decision, and keeping them together makes the set legible.
+#
+# Selectors are on labels the charts set unconditionally, never on
+# app.kubernetes.io/instance -- that is also ArgoCD's tracking label, so it is
+# owned by two things at once (the same reasoning as kyverno-monitoring's).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cilium-agent
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cilium-agent
+  endpoints:
+    - port: metrics
+      interval: 30s
+      # Cilium's own chart ships this relabeling with its ServiceMonitor:
+      # without it every series is attributed to the Service rather than to the
+      # node whose agent produced it, which makes per-node CNI problems
+      # invisible.
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+          action: replace
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cilium-envoy
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cilium-envoy
+  endpoints:
+    - port: envoy-metrics
+      interval: 30s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+          action: replace
+---
+# The controller only. cainjector and webhook expose metrics on the same port
+# name but carry none of the certificate state -- certmanager_certificate_*
+# comes from here, and it is the reason this file exists at all.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+spec:
+  namespaceSelector:
+    matchNames: [cert-manager]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/component: controller
+  endpoints:
+    - port: http-metrics
+      interval: 60s
+---
+# longhorn-manager serves /metrics on the backend Service's `manager` port; no
+# chart value is needed to expose it.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: longhorn
+spec:
+  namespaceSelector:
+    matchNames: [longhorn-system]
+  selector:
+    matchLabels:
+      app: longhorn-manager
+  endpoints:
+    - port: manager
+      interval: 30s
+---
+# Both Traefik instances in one ServiceMonitor: the dedicated metrics Service
+# each release creates (metrics.prometheus.service.enabled, values/traefik.yaml)
+# carries identical labels, so the namespaces distinguish them and the job
+# label comes from the Service name.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: traefik
+spec:
+  namespaceSelector:
+    matchNames: [traefik-external, traefik-internal]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+      app.kubernetes.io/component: metrics
+  endpoints:
+    - port: metrics
+      interval: 30s
+---
+# All three ArgoCD metrics Services. part-of is set by the chart on each and by
+# nothing else; the per-component job label comes from the Service name.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd
+spec:
+  namespaceSelector:
+    matchNames: [argocd]
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: argocd
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: external-secrets
+spec:
+  namespaceSelector:
+    matchNames: [external-secrets]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: external-secrets
+  endpoints:
+    - port: metrics
+      interval: 60s

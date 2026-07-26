@@ -15,6 +15,23 @@ key_vault_resource_group_name = "terraform"
 
 cluster_name = "london"
 
+# Pinned deliberately, like every chart version in this repo. This is the
+# default Kubernetes version for the pinned Talos release
+# (DefaultKubernetesVersion in siderolabs/talos v1.13.6), so pinning it changes
+# nothing about an already-built cluster -- it only stops a future provider
+# build from moving the version silently. Talos v1.13 supports the six minors
+# back from that default.
+#
+# Bumping it is an in-place control-plane upgrade with its own procedure --
+# see ../../documentation/infrastructure/upgrades.md. Bump it in the same
+# change as talos_version only when the new Talos release requires it.
+kubernetes_version = "v1.36.2"
+
+# Longhorn v2 data engine. Off: the node prerequisites cost 2 GiB of RAM per
+# node in reserved hugepages, and nothing in this cluster uses the engine.
+# 40-kube-networking reads this value from this layer's state.
+longhorn_v2_data_engine = false
+
 # Control-plane VIP (Talos-native, replaces kube-vip). Must be free in VLAN 11.
 cluster_vip       = "10.1.11.10"
 workloads_gateway = "10.1.11.1"

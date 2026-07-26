@@ -69,18 +69,27 @@ locals {
             options     = ["bind", "rshared", "rw"]
           }]
         }
-        # Longhorn v2 data engine prereqs (SPDK / NVMe-over-TCP). Baked into every
-        # node so enabling the engine later is a Longhorn-values-only change.
-        # Reserves 2 GiB RAM per node (1024 x 2 MiB hugepages).
-        sysctls = {
+        # Longhorn v2 data engine prereqs (SPDK / NVMe-over-TCP), applied only
+        # when the engine is actually enabled. Reserved hugepages are not
+        # available for ordinary allocation, so baking them in unconditionally
+        # cost 2 GiB of every node's 16 GiB -- 12.5% of cluster memory -- for a
+        # feature that was switched off. var.longhorn_v2_data_engine is the one
+        # switch: this layer sets the prerequisites and 40-kube-networking
+        # reads the same value out of this layer's state for the Longhorn
+        # chart, so the two cannot disagree.
+        #
+        # Enabling it is therefore a 30-talos apply (node reboot for the
+        # hugepage reservation) followed by 40-kube-networking, not a
+        # values-only flip.
+        sysctls = var.longhorn_v2_data_engine ? {
           "vm.nr_hugepages" = "1024"
-        }
+        } : {}
         kernel = {
-          modules = [
+          modules = var.longhorn_v2_data_engine ? [
             { name = "nvme_tcp" },
             { name = "vfio_pci" },
             { name = "uio_pci_generic" },
-          ]
+          ] : []
         }
       }
       cluster = {
@@ -110,14 +119,30 @@ data "talos_client_configuration" "this" {
   endpoints            = local.node_ips
 }
 
+# kubernetes_version is pinned explicitly. Left unset, the provider supplies
+# the default Kubernetes version bundled with whichever provider build is in
+# use, so a `~> 0.11` patch bump could change the control-plane version on the
+# next apply with nothing in the diff naming it. Bumping Kubernetes is its own
+# decision with its own runbook (documentation/infrastructure/upgrades.md).
 data "talos_machine_configuration" "controlplane" {
-  cluster_name     = var.cluster_name
-  cluster_endpoint = "https://${var.cluster_vip}:6443"
-  machine_type     = "controlplane"
-  machine_secrets  = talos_machine_secrets.this.machine_secrets
-  talos_version    = local.talos_version
+  cluster_name       = var.cluster_name
+  cluster_endpoint   = "https://${var.cluster_vip}:6443"
+  machine_type       = "controlplane"
+  machine_secrets    = talos_machine_secrets.this.machine_secrets
+  talos_version      = local.talos_version
+  kubernetes_version = var.kubernetes_version
 }
 
+# A for_each applies to all three nodes concurrently, and apply_mode "auto"
+# reboots a node when the change needs it -- so a config change that reboots
+# can take the whole etcd quorum at once. Terraform cannot serialise a
+# for_each, so the guard is procedural: a change here that will reboot is
+# applied one node at a time with
+#   terraform apply -target='talos_machine_configuration_apply.node["k8s-node-1"]'
+# waiting for the node to rejoin between each. documentation/infrastructure/
+# upgrades.md carries the full procedure; the cluster-health gate below is what
+# makes a full-blast apply fail loudly instead of quietly returning success on
+# a cluster that has not come back.
 resource "talos_machine_configuration_apply" "node" {
   for_each                    = local.nodes
   client_configuration        = talos_machine_secrets.this.client_configuration
@@ -137,4 +162,18 @@ resource "talos_cluster_kubeconfig" "this" {
   depends_on           = [talos_machine_bootstrap.this]
   client_configuration = talos_machine_secrets.this.client_configuration
   node                 = local.node_ips[0]
+}
+
+# Gate the layer on the cluster actually being healthy rather than on the API
+# having answered once. Without it this layer reports success the moment
+# bootstrap returns, and 40-kube-networking -- which is meant to run straight
+# after -- starts against an API that is not serving yet. It is also what turns
+# a concurrent reboot of all three control-plane nodes into a failed apply
+# instead of a silent one.
+data "talos_cluster_health" "this" {
+  depends_on = [talos_cluster_kubeconfig.this]
+
+  client_configuration = talos_machine_secrets.this.client_configuration
+  endpoints            = local.node_ips
+  control_plane_nodes  = local.node_ips
 }

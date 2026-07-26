@@ -13,7 +13,7 @@ kubernetes/
 │   ├── values.yaml       # the app registry
 │   └── templates/applications.yaml
 └── apps/
-    └── <group>/          # security, monitoring, edge, database, autoscaling -- by function
+    └── <group>/          # platform, security, monitoring, edge, database, autoscaling -- by function
         └── <name>/       # one directory per app
             ├── Chart.yaml    # umbrella: pins the upstream chart as a dependency
             ├── values.yaml   # all configuration, under the dependency's name key
@@ -28,7 +28,7 @@ at render time; no `Chart.lock` is committed. An app with no upstream chart
 (`cloudflared/`) is the same shape minus the dependency — plain `templates/`.
 
 Adding an app: create `kubernetes/apps/<group>/<name>/` (an existing group —
-`security`, `monitoring`, `edge`, `database`, `autoscaling` — or a new one), add one entry to
+`platform`, `security`, `monitoring`, `edge`, `database`, `autoscaling` — or a new one), add one entry to
 the registry in `kubernetes/bootstrap/values.yaml` with both `name` and `group`
 set (the registry template renders `path: kubernetes/apps/{{ .group }}/{{
 .name }}`), push. The registry entry also sets the destination namespace,
@@ -298,6 +298,9 @@ app's `managedNamespaceMetadata`, so they exist before the first pod:
 - `kyverno` (owned by `kyverno`) — enforce `baseline`.
 - `keda` (owned by `keda`) — enforce `restricted`. All three KEDA pods are
   compliant as shipped (`programming/autoscaling.md`).
+- `platform-system` (owned by `platform-limits`) — enforce `restricted`.
+  Nothing schedules there; that app renders `LimitRange`s into other
+  namespaces only.
 
 The only Terraform-owned namespace is `external-secrets` — it must hold the
 bootstrap credential before ArgoCD runs. Its PSA label is set on the
@@ -370,3 +373,36 @@ before the wave that installs its own CRD. That is why Kyverno's
 at wave `1` rather than part of the engine app, and why the upstream chart's
 `serviceMonitor.enabled` flags stay off. Nothing catches this on a running
 cluster — the CRDs are already there — only on a rebuild.
+
+`infra-monitoring` (wave `1`) is the same split applied to everything else:
+Cilium, cert-manager, Longhorn, Traefik and ArgoCD are installed by Terraform
+in layers that run before those CRDs exist, and `external-secrets` is a GitOps
+app at wave `-2`. None of them can use its own chart's `serviceMonitor` flag,
+so all six ServiceMonitors — and the certificate-expiry, volume-degraded,
+app-health and secret-sync alerts — live in that one app
+(`infrastructure/observability.md`).
+
+`platform-limits` at wave `3` renders a per-namespace memory `LimitRange`. It
+has to follow everything, because a `LimitRange` cannot be created into a
+namespace that does not exist yet and it owns none of the namespaces it writes
+into. Its namespace list is explicit rather than derived: the namespaces come
+from two places (this registry and the Terraform layers), and one landing where
+nobody expected it is worse than one missing.
+
+## Why the PriorityClasses are not a GitOps app
+
+The `platform-*` classes every workload above names are Terraform-owned
+(`terraform/40-kube-networking/scheduling.tf`), and they are the one piece of
+cluster-wide configuration that could not be.
+
+No sync wave is early enough. A pod naming a `PriorityClass` that does not exist
+is rejected by the `Priority` admission plugin, and ArgoCD's own pods name
+`platform-critical` — so a class ArgoCD created could never admit the release
+that installs ArgoCD. cert-manager and both Traefik instances have the same
+problem one layer earlier: they are `helm_release`s in 40-kube-networking, which
+runs before ArgoCD exists at all.
+
+This is the same shape as the `external-secrets` namespace, and it is the test
+for whether something belongs in Terraform rather than the registry: if a
+Terraform layer's own resources depend on it, a wave number cannot fix the
+ordering, however small the number is.

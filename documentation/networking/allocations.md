@@ -88,7 +88,10 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
 - **Public edge is Traefik running in-cluster, split by exposure:** two instances -
   `traefik-external` (10.1.11.50, the Cloudflare Tunnel origin; the router's only WAN
   port-forward, tcp 80/443, in dnat mode only) and
-  `traefik-internal` (10.1.11.51, LAN-only, never forwarded). Apps choose exposure via
+  `traefik-internal` (10.1.11.51, LAN-only, never forwarded). Three replicas each, so a node
+  event does not take an entry point with it, and both Services stay on
+  `externalTrafficPolicy: Cluster` - Cilium's L2 announcements are incompatible with `Local`
+  (`wifi_and_isolation.md` §4). Apps choose exposure via
   ingressClass; internal-only apps are unreachable from the WAN by topology. Containment of
   the internet-facing pods is handled at the Kubernetes layer (Cilium-enforced
   NetworkPolicy, RBAC-scoped read-only ServiceAccount) rather than a separate DMZ VLAN.

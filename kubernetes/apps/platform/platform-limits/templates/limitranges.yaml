@@ -1,0 +1,39 @@
+# A memory ceiling per namespace, and nothing else.
+#
+# Memory is the non-compressible resource: a container without a limit that
+# leaks takes its node down, and on a 3-node cluster that is a third of the
+# capacity plus whatever was scheduled there. LimitRange is the only mechanism
+# that closes that for containers whose limits this repo does not author --
+# every third-party chart shipping `resources: {}`.
+#
+# Deliberately NOT here:
+#
+#   CPU limits. The kubelet enforces a CPU limit by throttling, which makes a
+#   burst-shaped workload slower without making the node safer. The repo's
+#   existing values files omit CPU limits for the same reason, and a
+#   LimitRange `max` on cpu would reintroduce them everywhere at once, since
+#   LimitRanger defaults a missing limit to `max`.
+#
+#   ResourceQuota. A quota on requests forces every pod in the namespace to
+#   declare them, which in turn forces a LimitRange `defaultRequest` -- and
+#   that would satisfy kyverno-policies' workload-best-practices audit for
+#   every container in the cluster, deleting the only signal there is about
+#   which workloads have not been sized. The ceiling below is worth having;
+#   trading that signal for a quota on a cluster with one operator and a fixed
+#   workload is not.
+#
+# The `max` value is a backstop, not a budget: it is above what anything here
+# legitimately needs, so hitting it means something is wrong.
+{{- range .Values.namespaces }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: memory-ceiling
+  namespace: {{ .name }}
+spec:
+  limits:
+    - type: Container
+      max:
+        memory: {{ .maxMemory | default $.Values.defaultMaxMemory }}
+{{- end }}

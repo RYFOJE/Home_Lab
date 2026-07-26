@@ -1,0 +1,13 @@
+# CI-only placeholders for the values argocd.tf merges on top of
+# values/argo-cd.yaml at apply time (the Key Vault admin password hash and the
+# Ingress hostname built from the public domain). Never read by Terraform.
+#
+# scripts/check_cluster_policy.py renders the chart with argo-cd.yaml AND this
+# file so the check covers the whole value set. Keep the key set matching the
+# yamlencode block in argocd.tf; the values are stand-ins.
+configs:
+  secret:
+    argocdServerAdminPassword: "$2a$10$0000000000000000000000000000000000000000000000000000"
+server:
+  ingress:
+    hostname: argocd.example.com

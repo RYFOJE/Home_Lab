@@ -1,0 +1,27 @@
+# cert-manager values. Read by cert-manager.tf via file() and rendered by
+# scripts/check_cluster_policy.py in CI -- see values/cilium.yaml for why.
+
+crds:
+  enabled: true
+
+# FW-015 limits workload egress to tcp 80/443, so the DNS-01 self-check cannot
+# query authoritative nameservers on :53 directly. Route all propagation checks
+# through the internal Technitium resolvers (FW-001).
+#
+# These two addresses are the core-infra LXCs owned by 20-proxmox
+# (documentation/networking/allocations.md). They are restated here rather than
+# read from remote state because a values file is static by construction; the
+# drift matrix in the audit tracks them.
+dns01RecursiveNameservers: "10.0.10.4:53,10.0.10.5:53"
+dns01RecursiveNameserversOnly: true
+
+# The wildcard certificate the whole public edge depends on is issued here, so
+# the controller outranks ordinary workloads under node pressure.
+global:
+  priorityClassName: platform-critical
+
+# Metrics Services ship by default (cert-manager, -cainjector, -webhook). The
+# ServiceMonitor that scrapes them -- and the certificate-expiry alert, the one
+# failure this cluster was previously blind to -- lives in the GitOps app
+# kubernetes/apps/monitoring/infra-monitoring. Same CRD-ordering reason as
+# values/cilium.yaml.

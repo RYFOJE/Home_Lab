@@ -13,10 +13,9 @@ variable "public_domain" {
   type        = string
 }
 
-variable "install_crds" {
-  description = "Whether this instance's helm release installs the shared Traefik CRDs. Exactly one instance sets true; the rest set false and are ordered after it via module depends_on."
-  type        = bool
-  default     = false
+variable "base_values" {
+  description = "Contents of the shared values/traefik.yaml, passed in by the root layer so the module holds no path traversal and CI can render the same file. Merged under the per-instance values built in main.tf."
+  type        = string
 }
 
 variable "chart_repository" {

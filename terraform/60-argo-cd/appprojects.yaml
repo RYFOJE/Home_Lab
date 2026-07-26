@@ -34,6 +34,10 @@ sharedClusterResources:
   - {group: admissionregistration.k8s.io, kind: MutatingWebhookConfiguration}
   # The postgres app ships its own node-local class rather than using the
   # default `longhorn` one (documentation/infrastructure/databases.md).
+  - {group: storage.k8s.io, kind: StorageClass}
+  # No PriorityClass: the platform-* classes are Terraform-owned
+  # (40-kube-networking/scheduling.tf) precisely because ArgoCD's own pods name
+  # one, so no registry app renders the kind and nothing here should admit it.
   # Pairs with the Kyverno rule forbidding a second store: that blocks a store
   # created by any means, this blocks the GitOps path to one.
   - {group: external-secrets.io, kind: ClusterSecretStore}

@@ -2,8 +2,9 @@
 """
 Renders every chart this cluster admits resources from -- the GitOps apps under
 kubernetes/apps (via the bootstrap registry) and the Terraform-pinned upstream
-charts (via their renovate-annotated tfvars) -- and checks the result against
-what kubernetes/apps/security/kyverno-policies enforces at admission time:
+charts (via their renovate-annotated tfvars, with the values files those layers
+actually apply) -- and checks the result against what
+kubernetes/apps/security/kyverno-policies enforces at admission time:
 
   - every container/initContainer/ephemeralContainer image resolves to an
     allow-listed registry, and carries an explicit tag or digest that is not
@@ -16,6 +17,12 @@ what kubernetes/apps/security/kyverno-policies enforces at admission time:
   - every rendered object stays under the 262144-byte
     last-applied-configuration cap, or the owning app sets
     ServerSideApply=true in the bootstrap registry
+
+Rendering the Terraform charts with their real values files is a check in its
+own right, separate from the policy rules: a chart that ships a
+values.schema.json refuses an unknown key, and one that does not silently drops
+it. Both classes of bug reached this repository while CI rendered chart
+defaults, and both surface here now as a failed render or a diffable output.
 
 Only the third of those is unique to this script. The first two are a
 hand-written mirror of rules the Kyverno engine can evaluate itself, and a
@@ -103,24 +110,22 @@ RENOVATE_HELM_RE = re.compile(
     r'version\s*=\s*"([^"]+)"\s*#\s*renovate:\s*helmRepo=(\S+)\s*chart=(\S+)'
 )
 
-# Extra flags needed to render a chart the way this repo actually configures
-# it, where that choice affects which images get pulled or which namespaces get
-# created. Terraform passes these charts a values block; this script renders
-# them standalone, so anything policy-relevant in that block has to be mirrored
-# here or the check runs against a configuration the cluster never sees.
-EXTRA_HELM_ARGS = {
-    "argo-cd": [
-        "--set", "redis.enabled=false",
-        "--set", "redis-ha.enabled=true",
-        "--set", "redis-ha.haproxy.enabled=true",
-    ],
-    # The chart creates a cilium-secrets Namespace of its own; 40-kube-networking
-    # cilium.tf labels it. --set-json rather than --set: the key contains dots
-    # that --set would read as path separators.
-    "cilium": [
-        "--set-json", f'secretsNamespaceLabels={{"{PSA_LABEL}":"baseline"}}',
-    ],
-}
+# Terraform-managed charts take their values from terraform/<layer>/values/
+# <chart>.yaml, which this script renders with. That is the whole point of the
+# file existing: the values Terraform applies and the values CI checks are the
+# same bytes, so a chart bump that invalidates a key fails on the PR instead of
+# at `terraform apply`.
+#
+# This replaced a hand-copied mirror of the values, which could not have caught
+# either of the two bugs it was written after: a `ports.web.redirections` key
+# the traefik schema rejects outright, and an argo-cd `server.insecure` key the
+# chart silently ignores. Neither was visible while CI rendered chart defaults.
+#
+# <chart>.check.yaml, where present, stands in for the values Terraform builds
+# at apply time from Key Vault or per-instance inputs -- so the render covers
+# the whole value set rather than only the static half.
+VALUES_DIRNAME = "values"
+CHECK_VALUES_SUFFIX = ".check.yaml"
 
 # Cluster-scoped kinds rendered anywhere in this repo, so dump() knows which
 # resources must *not* be stamped with a namespace, and check_app_projects
@@ -652,10 +657,47 @@ def render_gitops_apps() -> None:
         check_app_projects(docs, app, projects)
 
 
+def terraform_values_files(layer: Path, chart: str) -> list[Path]:
+    """The values Terraform passes this chart, if the layer keeps them in a file.
+
+    Convention over registry: terraform/<layer>/values/<chart>.yaml is read by
+    the layer's helm_release and by this function, so there is nothing to keep
+    in sync. A chart with no such file is rendered with its defaults, which is
+    correct for the ones Terraform genuinely installs unconfigured.
+    """
+    found = []
+    for name in (f"{chart}.yaml", f"{chart}{CHECK_VALUES_SUFFIX}"):
+        path = layer / VALUES_DIRNAME / name
+        if path.exists():
+            found.append(path)
+    return found
+
+
+def check_orphaned_values_files(used: set[Path]) -> None:
+    """A values file no pinned chart renders is a file nothing checks.
+
+    It happens the obvious way: a chart pin is renamed or removed from tfvars
+    and its values file is left behind. The file keeps being read by the
+    layer's helm_release -- or worse, stops being read and nobody notices --
+    while this script silently skips it.
+    """
+    for layer in sorted(REPO_ROOT.glob("terraform/*/")):
+        for path in sorted((layer / VALUES_DIRNAME).glob("*.yaml")):
+            if path in used:
+                continue
+            errors.append(
+                f"[values] {path.relative_to(REPO_ROOT)} matches no chart pinned in "
+                f"{layer.name}/terraform.tfvars -- either the pin lost its "
+                f"`# renovate: helmRepo=... chart=...` annotation or the file is dead"
+            )
+
+
 def render_terraform_charts() -> None:
     seen_charts: set[str] = set()
+    used_values: set[Path] = set()
     for tfvars in sorted(REPO_ROOT.glob("terraform/*/terraform.tfvars")):
         text = tfvars.read_text()
+        layer = tfvars.parent
         for version, repo_url, chart in RENOVATE_HELM_RE.findall(text):
             source = f"terraform:{chart}@{version}"
             # One alias per chart, not per repo URL: keying the alias off the
@@ -676,9 +718,16 @@ def render_terraform_charts() -> None:
 
             cmd = ["helm", "template", chart, f"{chart}/{chart}", "--version", version,
                    "--include-crds"]
-            cmd += EXTRA_HELM_ARGS.get(chart, [])
+            for vf in terraform_values_files(layer, chart):
+                used_values.add(vf)
+                cmd += ["-f", str(vf)]
             r = run(cmd)
             if r.returncode != 0:
+                # A schema rejection lands here. Charts that ship a
+                # values.schema.json (traefik does) refuse an unknown key
+                # outright, and the helm provider validates through the same
+                # code path -- so this failure is the apply failing, found
+                # early.
                 errors.append(f"[{source}] helm template failed: {r.stderr.strip()}")
                 continue
 
@@ -691,30 +740,7 @@ def render_terraform_charts() -> None:
             # the annotation-size cap that gates GitOps apps doesn't apply.
             check_annotation_cap(docs, source, server_side_apply=True)
 
-
-def check_extra_args_mirror() -> None:
-    """EXTRA_HELM_ARGS is a hand-copy of what Terraform passes these charts.
-
-    Where that copy is the only reason a check passes, a drifting copy turns
-    the check green while the cluster rejects the apply. Assert the .tf still
-    says what the mirror claims it does, so removing the label there fails here
-    instead of at admission.
-    """
-    mirrors = {
-        "terraform/40-kube-networking/cilium.tf": (
-            ["secretsNamespaceLabels", PSA_LABEL],
-            "cilium's secretsNamespaceLabels (EXTRA_HELM_ARGS renders the "
-            "cilium-secrets namespace as labelled)",
-        ),
-    }
-    for rel, (needles, what) in mirrors.items():
-        text = (REPO_ROOT / rel).read_text()
-        missing = [n for n in needles if n not in text]
-        if missing:
-            errors.append(
-                f"[mirror:{rel}] EXTRA_HELM_ARGS mirrors {what}, but the file no "
-                f"longer contains {missing} -- the two have drifted"
-            )
+    check_orphaned_values_files(used_values)
 
 
 def check_vendored_manifests() -> None:
@@ -743,7 +769,6 @@ def main() -> None:
     elif argv:
         sys.exit("usage: check_cluster_policy.py [--dump <dir>]")
 
-    check_extra_args_mirror()
     render_gitops_apps()
     render_terraform_charts()
     check_vendored_manifests()

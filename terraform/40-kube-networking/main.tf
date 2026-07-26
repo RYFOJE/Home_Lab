@@ -1,5 +1,9 @@
-# Edge secrets (Cloudflare token, public domain, ACME email) come from Azure
-# Key Vault -- never committed (README rule). Same pattern as 10-network.
+# Edge secrets (public domain, ACME email) come from Azure Key Vault -- never
+# committed (README rule). Same pattern as 10-network.
+#
+# The Cloudflare DNS token is deliberately NOT read here any more: cert-manager
+# receives it through External Secrets Operator like every other in-cluster
+# secret (cert-manager.tf), so it never enters this layer's state.
 provider "azurerm" {
   features {}
 }
@@ -7,12 +11,6 @@ provider "azurerm" {
 data "azurerm_key_vault" "this" {
   name                = var.key_vault_name
   resource_group_name = var.key_vault_resource_group_name
-}
-
-# Scoped Cloudflare API token (Zone -> DNS -> Edit) for cert-manager DNS-01.
-data "azurerm_key_vault_secret" "cloudflare_dns_api_token" {
-  name         = "cloudflare-dns-api-token"
-  key_vault_id = data.azurerm_key_vault.this.id
 }
 
 # The owned public domain -- treated as PII, so it lives in Key Vault too.
@@ -48,6 +46,11 @@ locals {
 
   # eth1 IPs on VLAN 12; excluded from the whereabouts range in multus.tf
   node_storage_ips = data.terraform_remote_state.talos.outputs.node_storage_ips
+
+  # Owned by 30-talos, which sets the hugepages and kernel modules the engine
+  # needs. Consumed by longhorn.tf so the switch and its prerequisites cannot
+  # disagree.
+  longhorn_v2_data_engine = data.terraform_remote_state.talos.outputs.longhorn_v2_data_engine
 }
 
 provider "kubernetes" {

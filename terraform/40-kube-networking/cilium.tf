@@ -3,6 +3,10 @@
 # for the pool in allocations.md. 30-talos sets
 # cluster.network.cni = none and cluster.proxy.disabled = true; nothing works
 # until this release is applied, so everything else in this layer depends on it.
+#
+# Values live in values/cilium.yaml -- read here and by
+# scripts/check_cluster_policy.py, so CI renders the chart with exactly what
+# Terraform applies rather than with chart defaults.
 
 resource "helm_release" "cilium" {
   name       = "cilium"
@@ -11,48 +15,12 @@ resource "helm_release" "cilium" {
   version    = var.cilium_chart_version
   namespace  = "kube-system"
 
-  values = [yamlencode({
-    # Use the per-node podCIDRs Kubernetes carves from 10.1.200.0/22 (30-talos),
-    # keeping the documented 4-node capacity semantics.
-    ipam = { mode = "kubernetes" }
+  # Installing the CNI on a fresh cluster waits on every node's agent coming up
+  # behind an image pull. The provider's 300s default is not enough for that on
+  # a cold rebuild, and a timeout leaves a half-applied release behind.
+  timeout = 900
 
-    # kube-proxy is disabled in the Talos machine config; Cilium takes over.
-    # API access goes through KubePrism (Talos-local balancer, default-on).
-    kubeProxyReplacement = true
-    k8sServiceHost       = "localhost"
-    k8sServicePort       = 7445
-
-    # Talos requirements (no privileged init relabeling, cgroup v2 pre-mounted).
-    securityContext = {
-      capabilities = {
-        ciliumAgent = [
-          "CHOWN", "KILL", "NET_ADMIN", "NET_RAW", "IPC_LOCK", "SYS_ADMIN",
-          "SYS_RESOURCE", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID",
-        ]
-        cleanCiliumState = ["NET_ADMIN", "SYS_ADMIN", "SYS_RESOURCE"]
-      }
-    }
-    cgroup = {
-      autoMount = { enabled = false }
-      hostRoot  = "/sys/fs/cgroup"
-    }
-
-    # ARP-based announcement of LoadBalancer IPs on VLAN 11 (lease-based; the
-    # raised client rate limit is the documented prerequisite for the leases).
-    l2announcements    = { enabled = true }
-    k8sClientRateLimit = { qps = 20, burst = 40 }
-
-    # The chart creates a `cilium-secrets` Namespace of its own
-    # (tls.secretsNamespace.create defaults true) to hold TLS material for
-    # CiliumEnvoyConfig. Nothing schedules there, so baseline matches the rest
-    # of the cluster. The label is not optional: kyverno-policies'
-    # require-namespace-psa-label denies a namespace with no enforce label on
-    # UPDATE as well as CREATE, so without it any later chart bump that touches
-    # this object is refused fail-closed and the apply fails at admission.
-    secretsNamespaceLabels = {
-      "pod-security.kubernetes.io/enforce" = "baseline"
-    }
-  })]
+  values = [file("${path.module}/values/cilium.yaml")]
 }
 
 # LoadBalancer pool per allocations.md: 10.1.11.50 - 10.1.11.249 on VLAN 11.
@@ -81,6 +49,12 @@ resource "kubectl_manifest" "lb_pool" {
 #
 # Still cilium.io/v2alpha1 in 1.19 -- unlike the pool above, this kind has not
 # been promoted. Do not "align" the two.
+#
+# Every Service announced through this policy must keep
+# externalTrafficPolicy: Cluster. Cilium documents L2 announcements as
+# incompatible with `Local`: the lease holder answers ARP for the IP regardless
+# of whether it runs a backend, so a `Local` Service is silently black-holed on
+# every node that does not (values/traefik.yaml).
 resource "kubectl_manifest" "l2_announcements" {
   depends_on = [helm_release.cilium]
 

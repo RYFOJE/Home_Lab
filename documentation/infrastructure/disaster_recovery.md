@@ -158,11 +158,11 @@ Steps 4 and 5 run **back to back** — between them the cluster looks broken by 
 | 2 | `20-proxmox` | `proxmox-api-token` | 3 VMs + 2 LXCs running |
 | 3 | **DNS/NTP — manual** | — | `dig @10.0.10.4` and `@10.0.10.5` answer |
 | 4 | `30-talos` | — *(writes 2)* | Nodes exist and are **NotReady** — correct, no CNI yet |
-| 5 | `40-kube-networking` | `cloudflare-dns-api-token`, `public-domain`, `acme-email` | All 3 nodes Ready; wildcard cert issued |
+| 5 | `40-kube-networking` | `public-domain`, `acme-email` | All 3 nodes Ready; the three `platform-*` PriorityClasses exist; both Traefik Services hold their LB IPs. The wildcard cert is **Pending** — correct, see below |
 | 6 | **Longhorn target — manual** | — | Backup target connected; volumes restored |
-| 7 | `50-cloudflare` | `cloudflare-dns-api-token`, `cloudflare-account-id`, `public-domain` | Tunnel healthy; `cloudflared--tunnel-token` written |
-| 8 | `60-argo-cd` | `argocd-admin-password-bcrypt`, `azure-kv-sp-client-id`, `azure-kv-sp-client-secret`, `public-domain` | ArgoCD UI reachable |
-| 9 | *(unattended)* | — | See [Sync Apps](#sync-apps) |
+| 7 | `50-cloudflare` | `cert-manager--cloudflare-dns-api-token`, `cloudflare-account-id`, `public-domain` | Tunnel healthy; `cloudflared--tunnel-token` written |
+| 8 | `60-argo-cd` | `argocd-admin-password-bcrypt`, `azure-kv-sp-client-id`, `azure-kv-sp-client-secret`, `public-domain` | ArgoCD UI reachable over the wildcard cert once step 9 has issued it |
+| 9 | *(unattended)* | — | See [Sync Apps](#sync-apps), then the wildcard cert reaches `Ready` |
 
 Each layer is `cd terraform/<layer> && terraform init && terraform apply`.
 
@@ -176,7 +176,23 @@ Each layer is `cd terraform/<layer> && terraform init && terraform apply`.
   public resolver and NTP pool, so nodes booted before this exists never converge. Restore
   zones from Technitium's own backup.
 - **Step 5** — on state predating the backend key rename, `terraform init -migrate-state`
-  once. A plain `-reconfigure` starts from empty state and re-creates the layer.
+  once. A plain `-reconfigure` starts from empty state and re-creates the layer. This layer
+  also creates the `platform-*` PriorityClasses (`scheduling.tf`), which every later step
+  depends on: a pod naming a class that does not exist is rejected at admission, so a
+  partial step 5 makes step 8 fail with ArgoCD's pods stuck unschedulable rather than with
+  anything naming the real cause.
+
+  ```bash
+  kubectl get priorityclass platform-critical platform-observability platform-bulk
+  ```
+- **Steps 5 → 9, certificates** — the `letsencrypt` ClusterIssuer's DNS-01 solver reads a
+  Cloudflare token that External Secrets Operator syncs, and ESO does not exist until step 8
+  brings up ArgoCD. So the wildcard `Certificate`s sit `Pending` from step 5 until wave −1 of
+  step 9, and both Traefik instances serve their built-in self-signed certificate in the
+  meantime. This is the designed sequence, not a fault: it is what keeps the token out of
+  40-kube-networking's state. Nothing needs doing — issuance completes unattended once ESO
+  syncs. If it has not after ArgoCD is `Synced`/`Healthy`, check the ExternalSecret in
+  `cert-manager` before the Certificate.
 - **Step 9** — the PostgreSQL cluster comes back empty. It has no backups (`databases.md`),
   so nothing in this runbook restores it; the apps that depend on it come up against a fresh
   database.

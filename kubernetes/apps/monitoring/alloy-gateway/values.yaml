@@ -6,6 +6,7 @@ alloy:
   controller:
     type: deployment
     replicas: 2
+    priorityClassName: platform-bulk
 
   service:
     enabled: true

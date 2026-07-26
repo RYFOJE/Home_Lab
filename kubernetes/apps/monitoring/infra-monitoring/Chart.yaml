@@ -1,0 +1,5 @@
+apiVersion: v2
+name: infra-monitoring
+description: ServiceMonitors and alerts for the platform components installed outside the GitOps waves that can carry them -- Cilium, cert-manager, Longhorn, Traefik, ArgoCD, External Secrets. Plain templates, no upstream chart.
+type: application
+version: 0.1.0

@@ -3,7 +3,7 @@
 # convention as 10-network / 20-proxmox).
 
 variable "key_vault_name" {
-  description = "Azure Key Vault holding the edge secrets (cloudflare-dns-api-token, public-domain, acme-email)."
+  description = "Azure Key Vault holding the edge secrets (public-domain, acme-email). The Cloudflare token is reached through ESO, not by this layer."
   type        = string
 }
 
@@ -20,11 +20,6 @@ variable "storage_network_cidr" {
 variable "storage_network_mtu" {
   description = "MTU for the macvlan storage-network attachment. Must match eth1 (30-talos) and the physical path."
   type        = number
-}
-
-variable "longhorn_v2_data_engine" {
-  description = "Enable the Longhorn v2 data engine (SPDK / NVMe-over-TCP). Node prereqs (hugepages, nvme_tcp/vfio_pci/uio_pci_generic modules) are already baked in by 30-talos, so this is a values-only flip."
-  type        = bool
 }
 
 variable "cilium_chart_version" {
@@ -44,5 +39,10 @@ variable "longhorn_chart_version" {
 
 variable "traefik_chart_version" {
   description = "traefik helm chart version, pinned deliberately. Shared by both instances."
+  type        = string
+}
+
+variable "traefik_crds_chart_version" {
+  description = "traefik-crds helm chart version. Separate from the traefik chart because helm never upgrades a chart's own crds/ directory; republished only when the CRDs change, so its number lags traefik's."
   type        = string
 }

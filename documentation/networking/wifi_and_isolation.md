@@ -129,8 +129,16 @@ fast host rebuild.
 
 ## 4. Public Edge: Traefik In-Cluster
 
-Two Traefik instances run as Deployments inside the cluster (`terraform/40-kube-networking`), each
-exposed via a `LoadBalancer` Service with an IP from the Cilium LB pool:
+Two Traefik instances run as Deployments inside the cluster (`terraform/40-kube-networking`),
+three replicas each, exposed via a `LoadBalancer` Service with an IP from the Cilium LB pool.
+
+Both Services keep `externalTrafficPolicy: Cluster`. Cilium documents L2
+announcements as incompatible with `Local`: the node holding the ARP lease
+answers for the LB IP whether or not it runs a backend, so `Local` silently
+black-holes traffic on every node that does not — intermittently, and re-rolled
+on any node event. Client source IPs are preserved where it matters by the
+external instance's `forwardedHeaders.trustedIPs` (below); LAN traffic is
+SNATed to a node address, which is the accepted cost.
 
 | Instance | LB IP | ingressClass | Exposure |
 |---|---|---|---|

@@ -1,0 +1,28 @@
+# Longhorn values. Read by longhorn.tf via file() and rendered by
+# scripts/check_cluster_policy.py in CI -- see values/cilium.yaml for why.
+
+defaultSettings:
+  # Shares the OS disk -- bind-mounted by 30-talos kubelet extraMounts.
+  defaultDataPath: /var/lib/longhorn
+  # Replica/engine traffic over the Multus VLAN 12 attachment.
+  storageNetwork: longhorn-system/storage-network
+
+persistence:
+  # Retain, not the chart's Delete. A PVC deletion -- including one ArgoCD
+  # performs because an app was removed from the registry -- then leaves the
+  # PersistentVolume and its Longhorn volume behind instead of destroying the
+  # data. Reclaiming is a deliberate act afterwards
+  # (documentation/infrastructure/disaster_recovery.md).
+  reclaimPolicy: Retain
+
+# Longhorn ships its own longhorn-critical PriorityClass and assigns it to
+# every component, so this chart is deliberately not given one of the
+# platform-* classes (scheduling.tf).
+
+# Metrics are served on the longhorn-backend Service (port `manager`) with no
+# values change. The ServiceMonitor and the volume-degraded alerts live in the
+# GitOps app kubernetes/apps/monitoring/infra-monitoring -- same CRD-ordering
+# reason as values/cilium.yaml.
+#
+# defaultSettings.v2DataEngine is NOT set here: it is driven from 30-talos
+# (which owns the node prereqs the engine needs) and merged in by longhorn.tf.

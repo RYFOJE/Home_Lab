@@ -31,6 +31,11 @@ revision: main
 #   namespaceLabels  labels applied to that namespace (PSA enforcement)
 #   extraSyncOptions appended to the default syncOptions
 apps:
+  # The platform-* PriorityClasses the apps below name are NOT here: they are
+  # Terraform-owned (40-kube-networking/scheduling.tf). No wave is early enough
+  # for them -- ArgoCD's own pods name platform-critical, so a class ArgoCD
+  # creates could never admit the release that installs ArgoCD.
+
   # -- wave -2: secret machinery (operator + policy engine + their CRDs) --
   # No namespaceLabels: the external-secrets namespace is Terraform-owned
   # (60-argo-cd/gitops.tf sets the PSA label there). kubernetes_namespace
@@ -173,3 +178,25 @@ apps:
     group: monitoring
     namespace: kyverno
     wave: "1"
+
+  # The same split, for every platform component installed where its own
+  # chart's serviceMonitor flag cannot be used: Cilium, cert-manager, Longhorn,
+  # Traefik and ArgoCD are Terraform-installed (layers 40 and 60, both before
+  # the CRDs exist), and external-secrets is a GitOps app at wave -2. Namespace
+  # monitoring, owned by kube-prometheus-stack -- no createNamespace here.
+  - name: infra-monitoring
+    group: monitoring
+    namespace: monitoring
+    wave: "1"
+
+  # -- wave 3: per-namespace memory ceilings. Last, because a LimitRange
+  #    cannot be created into a namespace that does not exist yet and this app
+  #    owns none of the namespaces it writes into. platform-system is its own
+  #    nominal home and holds nothing else. --
+  - name: platform-limits
+    group: platform
+    namespace: platform-system
+    wave: "3"
+    createNamespace: true
+    namespaceLabels:
+      pod-security.kubernetes.io/enforce: restricted

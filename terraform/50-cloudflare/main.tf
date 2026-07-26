@@ -9,10 +9,18 @@ data "azurerm_key_vault" "this" {
   resource_group_name = var.key_vault_resource_group_name
 }
 
-# Shared with cert-manager (40-kube-networking). Scopes: Zone -> DNS -> Edit,
-# Zone -> Zone -> Read, Account -> Cloudflare Tunnel -> Edit (secrets.md).
+# One authoritative copy of the token, read two ways: here for the tunnel and
+# the public DNS records, and by External Secrets Operator for cert-manager's
+# DNS-01 solver. Scopes: Zone -> DNS -> Edit, Zone -> Zone -> Read,
+# Account -> Cloudflare Tunnel -> Edit (secrets.md).
+#
+# The cert-manager-- prefix is not about this layer. Key Vault keys ESO reads
+# are named <namespace>--<name> and a Kyverno policy checks that prefix against
+# the requesting namespace, so the vault name is fixed by the in-cluster path
+# (kubernetes/apps/security/cluster-secrets). This layer follows it rather than
+# keeping a second copy under the unprefixed name, which is a thing that drifts.
 data "azurerm_key_vault_secret" "cloudflare_dns_api_token" {
-  name         = "cloudflare-dns-api-token"
+  name         = "cert-manager--cloudflare-dns-api-token"
   key_vault_id = data.azurerm_key_vault.this.id
 }
 

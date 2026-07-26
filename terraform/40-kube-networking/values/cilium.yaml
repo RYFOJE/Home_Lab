@@ -1,0 +1,75 @@
+# Cilium values. Read by cilium.tf via file() and by
+# scripts/check_cluster_policy.py, which renders the chart with this exact file
+# before a PR merges -- one source of truth, so a chart bump that invalidates a
+# key fails in CI instead of at `terraform apply`.
+
+# Use the per-node podCIDRs Kubernetes carves from 10.1.200.0/22 (30-talos),
+# keeping the documented 4-node capacity semantics.
+ipam:
+  mode: kubernetes
+
+# kube-proxy is disabled in the Talos machine config; Cilium takes over.
+# API access goes through KubePrism (Talos-local balancer, default-on).
+kubeProxyReplacement: true
+k8sServiceHost: localhost
+k8sServicePort: 7445
+
+# Talos requirements (no privileged init relabeling, cgroup v2 pre-mounted).
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+
+# ARP-based announcement of LoadBalancer IPs on VLAN 11 (lease-based; the
+# raised client rate limit is the documented prerequisite for the leases).
+#
+# Every Service announced this way must stay on externalTrafficPolicy: Cluster.
+# Cilium documents L2 announcements as incompatible with `Local` -- the lease
+# holder answers ARP whether or not it runs a backend, so a `Local` Service
+# black-holes traffic on every node that does not. See values/traefik.yaml.
+l2announcements:
+  enabled: true
+k8sClientRateLimit:
+  qps: 20
+  burst: 40
+
+# Metrics endpoints and their Services, but no ServiceMonitor: this chart is
+# installed by Terraform at layer 40, and the monitoring.coreos.com CRDs only
+# arrive with kube-prometheus-stack (ArgoCD, wave 0). A ServiceMonitor here
+# would fail to apply on a fresh build. The ServiceMonitors live in the GitOps
+# app kubernetes/apps/monitoring/infra-monitoring, at a wave where the CRDs
+# exist -- the same split kyverno-monitoring already uses.
+prometheus:
+  enabled: true
+  metricsService: true
+operator:
+  prometheus:
+    enabled: true
+
+# The chart creates a `cilium-secrets` Namespace of its own
+# (tls.secretsNamespace.create defaults true) to hold TLS material for
+# CiliumEnvoyConfig. Nothing schedules there, so baseline matches the rest of
+# the cluster. The label is not optional: kyverno-policies'
+# require-namespace-psa-label denies a namespace with no enforce label on
+# UPDATE as well as CREATE, so without it any later chart bump that touches
+# this object is refused fail-closed and the apply fails at admission.
+secretsNamespaceLabels:
+  pod-security.kubernetes.io/enforce: baseline

@@ -26,6 +26,11 @@ loki:
 
   singleBinary:
     replicas: 1
+    # platform-bulk sits below the default priority and never preempts: a log
+    # store losing ingestion during node pressure is recoverable, and it should
+    # not be what displaces the ingress controller or the database
+    # (terraform/40-kube-networking/scheduling.tf).
+    priorityClassName: platform-bulk
     resources:
       requests:
         cpu: 200m

@@ -2,3 +2,7 @@
 # rendered manifests the Kyverno CLI pass evaluates in CI. Regenerated on every
 # run, never committed.
 /rendered/
+
+# Python bytecode from scripts/.
+__pycache__/
+*.pyc

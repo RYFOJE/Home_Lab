@@ -29,6 +29,16 @@ resource "proxmox_virtual_environment_vm" "k8s_node" {
     enabled = false
   }
 
+  # file_id is the boot image the disk is imported FROM, and it matters exactly
+  # once, at creation. Talos then installs itself to this disk and every later
+  # version change is an in-place `talosctl upgrade` against
+  # machine.install.image (pinned by 30-talos to the same factory installer).
+  #
+  # Without the ignore_changes below, bumping var.talos_version renames the
+  # downloaded image, which changes this id, which the provider resolves by
+  # replacing the disk -- destroying etcd and every Longhorn replica on all
+  # three nodes, in parallel, for what is meant to be a rolling upgrade.
+  # See documentation/infrastructure/upgrades.md.
   disk {
     datastore_id = var.vm_datastore_id
     file_id      = proxmox_download_file.talos_nocloud[each.value.pve_node].id
@@ -36,6 +46,10 @@ resource "proxmox_virtual_environment_vm" "k8s_node" {
     size         = var.vm_disk_gb
     iothread     = true
     discard      = "on"
+  }
+
+  lifecycle {
+    ignore_changes = [disk[0].file_id]
   }
 
   # net0 -> eth0: Workloads VLAN 11.
