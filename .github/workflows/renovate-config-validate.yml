@@ -1,0 +1,32 @@
+name: renovate-config-validate
+
+# The three customManagers in .github/renovate.json are hand-written regexes
+# over file formats Renovate has no native manager for (Terraform .tfvars
+# comments, a bare workflow env var, vendored YAML) -- nothing else exercises
+# them, so a typo'd matchString or schema mistake would otherwise surface only
+# as a manager silently matching nothing on Renovate's next scheduled run.
+on:
+  pull_request:
+    paths:
+      - ".github/renovate.json"
+      - ".github/workflows/renovate-config-validate.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/renovate.json"
+      - ".github/workflows/renovate-config-validate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npx --yes --package renovate -- renovate-config-validator --strict .github/renovate.json

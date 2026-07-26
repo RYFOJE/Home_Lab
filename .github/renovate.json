@@ -36,6 +36,13 @@
       "matchFileNames": ["terraform/40-kube-networking/manifests/**"],
       "addLabels": ["needs-manual-revendor"],
       "automerge": false
+    },
+    {
+      "matchFileNames": ["kubernetes/apps/**"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
     }
-  ]
+  ],
+  "abandonmentThreshold": "2 years",
+  "minimumReleaseAge": "30 days"
 }

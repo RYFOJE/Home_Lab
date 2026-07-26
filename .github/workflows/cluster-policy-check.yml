@@ -88,7 +88,7 @@ jobs:
       # KYVERNO_CLI_VERSION tracks the kyverno chart's appVersion
       # (kubernetes/apps/security/kyverno/Chart.yaml) so CI evaluates the
       # policies on the same engine the cluster runs. Renovate keeps it fresh
-      # through the custom manager in renovate.json.
+      # through the custom manager in .github/renovate.json.
       - name: Install the Kyverno CLI
         env:
           # renovate: datasource=github-releases depName=kyverno/kyverno
