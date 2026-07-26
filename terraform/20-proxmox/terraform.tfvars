@@ -14,7 +14,7 @@ core_infra_ssh_public_key = "ssh-ed25519 AAAA... you@machine" # PLACEHOLDER: set
 # -----------------------------------------------------------------------
 # Talos nodes (documentation/networking/allocations.md)
 # -----------------------------------------------------------------------
-talos_version = "v1.13.6"
+talos_version = "v1.13.7"
 
 nodes = {
   k8s-node-1 = { pve_node = "pve1", vm_id = 111, ip = "10.1.11.11", storage_ip = "10.1.12.11" }

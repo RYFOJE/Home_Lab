@@ -17,7 +17,7 @@ cluster_name = "london"
 
 # Pinned deliberately, like every chart version in this repo. This is the
 # default Kubernetes version for the pinned Talos release
-# (DefaultKubernetesVersion in siderolabs/talos v1.13.6), so pinning it changes
+# (DefaultKubernetesVersion in siderolabs/talos v1.13.7), so pinning it changes
 # nothing about an already-built cluster -- it only stops a future provider
 # build from moving the version silently. Talos v1.13 supports the six minors
 # back from that default.
