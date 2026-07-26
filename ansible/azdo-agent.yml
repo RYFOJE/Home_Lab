@@ -39,6 +39,5 @@
             path: "{{ azdo_admin_kubeconfig.path }}"
             state: absent
           delegate_to: localhost
-          run_once: true
           when: azdo_admin_kubeconfig is defined
           changed_when: false
