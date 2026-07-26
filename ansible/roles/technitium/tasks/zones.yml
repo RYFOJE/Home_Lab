@@ -1,0 +1,63 @@
+---
+- name: List the zones the server already holds
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/zones/list"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_token }}"
+    timeout: "{{ technitium_api_timeout }}"
+  register: technitium_zone_list
+  failed_when: technitium_zone_list.json.status | default('error') != 'ok'
+  changed_when: false
+  no_log: "{{ technitium_no_log }}"
+
+- name: Record the existing zone names
+  ansible.builtin.set_fact:
+    technitium_existing_zones: >-
+      {{ (technitium_zone_list.json.response.zones
+          | default(technitium_zone_list.json.zones | default([])))
+         | map(attribute='name') | map('lower') | list }}
+  no_log: "{{ technitium_no_log }}"
+
+- name: Create the managed zones
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/zones/create"
+    method: POST
+    body_format: form-urlencoded
+    body: >-
+      {{ {'token': technitium_token, 'zone': item.name, 'type': item.type}
+         | combine(item.extra | default({})) }}
+    timeout: "{{ technitium_api_timeout }}"
+  loop: "{{ technitium_zones }}"
+  loop_control:
+    label: "{{ item.type }}"
+  when: item.name | lower not in technitium_existing_zones
+  register: technitium_zone_create
+  failed_when:
+    - technitium_zone_create is not skipped
+    - technitium_zone_create.json.status | default('error') != 'ok'
+  no_log: "{{ technitium_no_log }}"
+
+# Transfer and notify targets, so the secondary can pull and is told to. The
+# network half of this is LXC-FW-003 in documentation/networking/firewall_rules.yaml.
+# Applied unconditionally for the same reason as the server settings.
+- name: Apply zone transfer options
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/zones/options/set"
+    method: POST
+    body_format: form-urlencoded
+    body: >-
+      {{ {'token': technitium_token, 'zone': item.name}
+         | combine(technitium_primary_zone_options) }}
+    timeout: "{{ technitium_api_timeout }}"
+  loop: "{{ technitium_zones }}"
+  loop_control:
+    label: "{{ item.type }}"
+  when: technitium_zone_role == 'primary'
+  register: technitium_zone_options
+  failed_when:
+    - technitium_zone_options is not skipped
+    - technitium_zone_options.json.status | default('error') != 'ok'
+  changed_when: false
+  no_log: "{{ technitium_no_log }}"

@@ -197,6 +197,27 @@ a backup. Read `databases.md` on what backups exist before starting one.
 
 ---
 
+## Technitium
+
+The official installer takes no version parameter and always fetches the
+current release, so the version is not pinned at install time. `ansible/`
+asserts against it afterwards: set `technitium_version` in
+`roles/technitium/defaults/main.yml` and a run fails when the installed server
+does not match.
+
+Upgrading is the installer again, one server at a time — `10.0.10.5` first, so
+the primary keeps answering while the secondary is down, and a secondary that
+comes back wrong is a zone transfer away from correct rather than a rebuild.
+The playbook skips the installer when `dns.service` already exists, so an
+upgrade is `systemctl stop dns` and a manual installer run on that host, then a
+normal playbook run to reassert settings and zones.
+
+Independent of the ordering below: DNS is under the whole stack, and a
+Technitium upgrade touches nothing the cluster versions care about. Do it in its
+own window (`core_infra.md`).
+
+---
+
 ## UniFi and Proxmox
 
 Neither is Terraform-managed.

@@ -1,0 +1,29 @@
+---
+- name: Install
+  ansible.builtin.import_tasks: install.yml
+
+- name: Authenticate
+  ansible.builtin.import_tasks: auth.yml
+
+- name: Apply server settings
+  ansible.builtin.import_tasks: settings.yml
+
+- name: Reconcile zones
+  ansible.builtin.import_tasks: zones.yml
+
+- name: Reconcile records
+  ansible.builtin.import_tasks: records.yml
+  when: technitium_zone_role == 'primary'
+
+# The session token is short-lived but there is no reason to leave one valid
+# after the run.
+- name: End the API session
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/user/logout"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_token }}"
+    timeout: "{{ technitium_api_timeout }}"
+  changed_when: false
+  no_log: "{{ technitium_no_log }}"

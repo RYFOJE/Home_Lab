@@ -1,0 +1,27 @@
+---
+technitium_installer_url: https://download.technitium.com/dns/install.sh
+technitium_service_unit: /etc/systemd/system/dns.service
+technitium_api_url: http://127.0.0.1:5380
+technitium_api_timeout: 30
+
+# The installer exposes no version parameter and always fetches the current
+# release, so a pin can only be checked after the fact. Set to a version string
+# to make the run fail when the installed server does not match; empty accepts
+# whatever the installer produced (documentation/infrastructure/upgrades.md).
+# Latest at the time this pin was set (github.com/TechnitiumSoftware/DnsServer
+# releases) -- confirm against technitium_installed_version on the first run
+# and correct this if the API reports a different string format.
+technitium_version: "15.4.0"
+
+technitium_admin_user: admin
+
+# Technitium ships with this and refuses nothing until it is changed; the role
+# changes it on first run and never uses it again.
+technitium_default_password: admin
+
+technitium_zone_role: primary
+technitium_zones: []
+technitium_record_ttl: 3600
+technitium_settings: {}
+technitium_primary_zone_options: {}
+technitium_no_log: true

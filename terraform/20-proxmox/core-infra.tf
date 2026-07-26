@@ -1,10 +1,11 @@
 # core-infra DNS/NTP LXCs (allocations.md: 10.0.10.4 primary, 10.0.10.5 secondary).
 # Split across pve1/pve2 so losing one host doesn't take down both.
 #
-# Terraform creates the containers only. Technitium DNS + chrony install and
-# config (zone transfer, blocklists) are manual/Ansible -- Proxmox LXCs have no
-# cloud-init. Do this BEFORE applying 30-talos: the k8s nodes resolve and sync
-# time against these IPs from first boot.
+# Terraform creates the containers only -- Proxmox LXCs have no cloud-init.
+# Technitium is deployed by ansible/core-infra.yml
+# (documentation/infrastructure/core_infra.md); chrony is still manual. Do both
+# BEFORE applying 30-talos: the k8s nodes resolve and sync time against these
+# IPs from first boot.
 
 locals {
   # One template download per distinct Proxmox host running a core-infra LXC.
@@ -70,8 +71,9 @@ resource "proxmox_virtual_environment_container" "core_infra" {
     }
 
     # Final design: the LXCs resolve against themselves/each other. During the
-    # initial Technitium install nothing answers on 53 yet -- point resolv.conf
-    # at an upstream temporarily, then revert.
+    # initial Technitium install nothing answers on 53 yet -- the Ansible play
+    # swaps in an upstream resolver for its duration and restores this exact
+    # list, so nothing here drifts.
     dns {
       servers = local.core_infra_ips
     }

@@ -1,0 +1,98 @@
+---
+# Shared configuration for both core-infra DNS servers.
+# documentation/infrastructure/core_infra.md owns the decisions below.
+
+ansible_user: root
+
+key_vault_name: rj-london
+
+# Final resolver list written back to /etc/resolv.conf, primary first. Must stay
+# identical to what 20-proxmox sets at container create (core-infra.tf
+# initialization.dns) so a later terraform apply has nothing to reassert.
+core_infra_resolvers:
+  - 10.0.10.4
+  - 10.0.10.5
+
+technitium_primary_ip: 10.0.10.4
+technitium_secondary_ip: 10.0.10.5
+
+# RFC 8375. Infra hostnames only -- anything published through ingress uses the
+# public domain, which cannot get a publicly-trusted cert under home.arpa.
+technitium_infra_zone: home.arpa
+
+# PII rule (README, documentation/secrets.md): the public domain is never
+# committed. Read at play time on the control node.
+#
+# A lookup() in a var is re-evaluated on every reference, and both of these are
+# referenced from technitium_zones, which several tasks template. The play
+# resolves them into facts once under the names the roles actually use, so `az`
+# is invoked twice per host rather than a dozen times.
+technitium_public_domain_source: >-
+  {{ lookup('ansible.builtin.pipe',
+            'az keyvault secret show --vault-name ' ~ key_vault_name ~
+            ' --name public-domain --query value -o tsv') }}
+
+technitium_admin_password_source: >-
+  {{ lookup('ansible.builtin.pipe',
+            'az keyvault secret show --vault-name ' ~ key_vault_name ~
+            ' --name technitium-admin-password --query value -o tsv') }}
+
+# Every API task templates either the admin password or the public domain.
+# Override to false for a debugging run; never in a committed file.
+technitium_no_log: true
+
+technitium_settings:
+  dnsServerDomain: "{{ inventory_hostname }}.{{ technitium_infra_zone }}"
+
+  # The server answers recursively for the lab and is not an open resolver; the
+  # firewall (LXC-FW-001) is the other half of that.
+  recursion: AllowOnlyForPrivateNetworks
+
+  # FW-013 permits 10.0.10.4/.5 outbound on 53, 123 and 443 only -- DNS-over-TLS
+  # (853) would be dropped, so the choice here is plain 53 or DoH over 443.
+  forwarders: "1.1.1.1, 9.9.9.9"
+  forwarderProtocol: Udp
+
+  # VLAN 15 gets internal DNS specifically so these apply to IoT firmware
+  # (documentation/networking/allocations.md, VLAN 15 design note).
+  enableBlocking: "true"
+  blockListUrls: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+  blockListUpdateIntervalHours: 24
+
+# Zone-level transfer + notify, applied to primary zones only. Parameter names
+# and enum spellings are Technitium API surface and have been renamed across
+# major versions; they are data here so a version bump is a values edit rather
+# than a task rewrite.
+technitium_primary_zone_options:
+  zoneTransfer: UseSpecifiedNetworkACL
+  zoneTransferNetworkACL: "{{ technitium_secondary_ip }}"
+  notify: SpecifiedNameServers
+  notifyNameServers: "{{ technitium_secondary_ip }}"
+
+# The A records of home.arpa are the Address Assignments table in
+# documentation/networking/allocations.md -- that table is authoritative, this is
+# its DNS projection. Adding a device means adding it there first.
+technitium_infra_records:
+  - { name: router, ip: 10.0.10.1 }
+  - { name: switch, ip: 10.0.10.2 }
+  - { name: pbs, ip: 10.0.10.3 }
+  - { name: core-infra-1, ip: 10.0.10.4 }
+  - { name: core-infra-2, ip: 10.0.10.5 }
+  - { name: ap, ip: 10.0.10.6 }
+  - { name: pve1, ip: 10.0.10.11 }
+  - { name: pve2, ip: 10.0.10.12 }
+  - { name: pve3, ip: 10.0.10.13 }
+  - { name: k8s-api, ip: 10.1.11.10 }
+  - { name: k8s-node-1, ip: 10.1.11.11 }
+  - { name: k8s-node-2, ip: 10.1.11.12 }
+  - { name: k8s-node-3, ip: 10.1.11.13 }
+  - { name: traefik-external, ip: 10.1.11.50 }
+  - { name: traefik-internal, ip: 10.1.11.51 }
+
+# Split-horizon: the whole public domain resolves to traefik-internal on the LAN,
+# and traefik-internal forwards what it holds no route for to traefik-external
+# (documentation/programming/publishing_apps.md). Two records, no per-app record
+# ever. The apex is not redundant -- a wildcard never matches the zone apex.
+technitium_public_records:
+  - { name: "@", ip: 10.1.11.51 }
+  - { name: "*", ip: 10.1.11.51 }

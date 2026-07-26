@@ -1,0 +1,4 @@
+---
+# Reachable on 53 from 10.0.10.4/.5 under FW-013. Used only for the duration of
+# the run; the play's always-block puts core_infra_resolvers back.
+bootstrap_resolver: 1.1.1.1

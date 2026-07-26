@@ -1,0 +1,20 @@
+---
+# settings/set is a partial update -- only the keys sent are touched, so the
+# server's other settings are left alone.
+#
+# Applied unconditionally and reported unchanged. The alternative is diffing
+# against settings/get, which needs a type normalisation per key (the API accepts
+# comma-separated strings and returns lists, accepts enum names and returns
+# them cased differently) and would report drift that does not exist. Structural
+# state -- zones and records -- is reconciled properly; scalar settings are not.
+- name: Apply the managed server settings
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/settings/set"
+    method: POST
+    body_format: form-urlencoded
+    body: "{{ {'token': technitium_token} | combine(technitium_settings) }}"
+    timeout: "{{ technitium_api_timeout }}"
+  register: technitium_settings_result
+  failed_when: technitium_settings_result.json.status | default('error') != 'ok'
+  changed_when: false
+  no_log: "{{ technitium_no_log }}"

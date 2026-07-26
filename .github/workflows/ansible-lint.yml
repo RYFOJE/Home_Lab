@@ -1,0 +1,34 @@
+name: ansible-lint
+
+# ansible-lint is the only lint for ansible/ (CLAUDE.md, core_infra.md) --
+# --check is meaningless here since the role's work is HTTP calls against the
+# Technitium API, not file convergence, so there is nothing for check mode to
+# diff. Static lint is what actually runs in CI.
+on:
+  pull_request:
+    paths:
+      - "ansible/**"
+      - ".github/workflows/ansible-lint.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ansible/**"
+      - ".github/workflows/ansible-lint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - run: pip install ansible-lint
+
+      - run: ansible-lint
+        working-directory: ansible

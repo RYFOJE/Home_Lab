@@ -1,0 +1,37 @@
+---
+# Technitium DNS on the two core-infra LXCs. Terraform creates the containers
+# (terraform/20-proxmox/core-infra.tf); this configures what runs inside them.
+# documentation/infrastructure/core_infra.md
+- name: core-infra DNS
+  hosts: core_infra
+  gather_facts: false
+
+  # The secondary's zones transfer from the primary, so the primary must be
+  # serving before the secondary is touched. Inventory order supplies the rest.
+  serial: 1
+
+  tasks:
+    - name: Configure Technitium
+      block:
+        - name: Resolve the Key Vault lookups once
+          ansible.builtin.set_fact:
+            technitium_public_domain: "{{ technitium_public_domain_source }}"
+            technitium_admin_password: "{{ technitium_admin_password_source }}"
+          no_log: "{{ technitium_no_log }}"
+
+        - name: Make the container usable by Ansible
+          ansible.builtin.import_role:
+            name: bootstrap
+
+        - name: Install and configure Technitium
+          ansible.builtin.import_role:
+            name: technitium
+
+      always:
+        # Restored even on failure: the bootstrap resolver is a temporary state
+        # that must not outlive the run. raw, because a failure early enough
+        # leaves the host without a Python interpreter.
+        - name: Restore resolv.conf to the core-infra resolvers
+          ansible.builtin.raw: >-
+            printf 'nameserver %s\n' {{ core_infra_resolvers | join(' ') }} > /etc/resolv.conf
+          changed_when: false

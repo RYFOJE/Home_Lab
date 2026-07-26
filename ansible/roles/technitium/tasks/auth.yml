@@ -1,0 +1,101 @@
+---
+# Technitium answers HTTP 200 with {"status":"error"} for logical failures, so
+# every task in this role checks the body rather than the status code. Here the
+# first login is *expected* to fail on a fresh install, which is why it is the
+# probe for whether the default password is still in place.
+
+- name: Log in with the managed password
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/user/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      user: "{{ technitium_admin_user }}"
+      pass: "{{ technitium_admin_password }}"
+      includeInfo: "true"
+    timeout: "{{ technitium_api_timeout }}"
+  register: technitium_login
+  failed_when: false
+  changed_when: false
+  no_log: "{{ technitium_no_log }}"
+
+- name: Log in with the shipped default credentials
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/user/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      user: "{{ technitium_admin_user }}"
+      pass: "{{ technitium_default_password }}"
+      includeInfo: "true"
+    timeout: "{{ technitium_api_timeout }}"
+  register: technitium_default_login
+  when: technitium_login.json.status | default('error') != 'ok'
+  failed_when:
+    - technitium_login.json.status | default('error') != 'ok'
+    - technitium_default_login.json.status | default('error') != 'ok'
+  changed_when: false
+  no_log: "{{ technitium_no_log }}"
+
+- name: Replace the default password
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/user/changePassword"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_default_login.json.token | default(technitium_default_login.json.response.token | default('')) }}"
+      pass: "{{ technitium_admin_password }}"
+    timeout: "{{ technitium_api_timeout }}"
+  register: technitium_password_change
+  when: technitium_default_login is not skipped
+  failed_when:
+    - technitium_default_login is not skipped
+    - technitium_password_change.json.status | default('error') != 'ok'
+  no_log: "{{ technitium_no_log }}"
+
+- name: Log in again with the managed password
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/user/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      user: "{{ technitium_admin_user }}"
+      pass: "{{ technitium_admin_password }}"
+      includeInfo: "true"
+    timeout: "{{ technitium_api_timeout }}"
+  register: technitium_relogin
+  when: technitium_default_login is not skipped
+  failed_when:
+    - technitium_default_login is not skipped
+    - technitium_relogin.json.status | default('error') != 'ok'
+  changed_when: false
+  no_log: "{{ technitium_no_log }}"
+
+# Login returns the token at the top level; every other endpoint nests its
+# payload under `response`. Tolerate both so a version bump does not break auth.
+- name: Record the session token
+  ansible.builtin.set_fact:
+    technitium_session: "{{ technitium_relogin if technitium_default_login is not skipped else technitium_login }}"
+  no_log: "{{ technitium_no_log }}"
+
+- name: Extract the session token
+  ansible.builtin.set_fact:
+    technitium_token: "{{ technitium_session.json.token | default(technitium_session.json.response.token | default('')) }}"
+    technitium_installed_version: "{{ technitium_session.json.info.version | default(technitium_session.json.response.info.version | default('unknown')) }}"
+  no_log: "{{ technitium_no_log }}"
+
+- name: Fail without a session token
+  ansible.builtin.assert:
+    that: technitium_token | length > 0
+    fail_msg: >-
+      Authenticated but no token in the login response. Check the API shape
+      against the installed server version ({{ technitium_installed_version }}).
+
+- name: Verify the installed version matches the pin
+  ansible.builtin.assert:
+    that: technitium_installed_version == technitium_version
+    fail_msg: >-
+      Installed Technitium {{ technitium_installed_version }}, pinned
+      {{ technitium_version }}. The installer has no version parameter -- upgrade
+      or repin (documentation/infrastructure/upgrades.md).
+  when: technitium_version | length > 0

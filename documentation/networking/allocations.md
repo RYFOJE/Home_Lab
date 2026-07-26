@@ -117,6 +117,11 @@ VLAN 13 (Trusted Devices) is shared scope, hence `10.0.13.0/24`.
   - The Proxmox hosts and PBS are themselves clients: `/etc/resolv.conf` and chrony on
     pve1/pve2/pve3/PBS point at `10.0.10.4` and `10.0.10.5` (intra-VLAN 10 traffic; the LXC-FW
     rules in `firewall_rules.yaml` are the host-firewall allows that make this work).
+  - Terraform creates the containers; the Technitium install, settings, zones and records are
+    deployed by `ansible/` (`../infrastructure/core_infra.md`). The A records of `home.arpa`
+    are this table projected into DNS — it is authoritative and a new device goes here first.
+    `scripts/check_dns_records.py` enforces that in both directions, so a row added here
+    without a record fails CI rather than quietly having no name.
 
   Root domain is `home.arpa` (RFC 8375) for infra hostnames; anything published via ingress
   uses a real owned domain, since `home.arpa` can't get a publicly-trusted TLS cert.

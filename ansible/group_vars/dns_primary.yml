@@ -1,0 +1,10 @@
+---
+technitium_zone_role: primary
+
+technitium_zones:
+  - name: "{{ technitium_infra_zone }}"
+    type: Primary
+    records: "{{ technitium_infra_records }}"
+  - name: "{{ technitium_public_domain }}"
+    type: Primary
+    records: "{{ technitium_public_records }}"

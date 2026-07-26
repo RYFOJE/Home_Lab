@@ -164,7 +164,7 @@ firewall_cluster_rules = [
 firewall_security_groups = {
   core_infra = {
     name    = "core-infra-lxc"
-    comment = "LXC-FW-001..005: DNS/NTP/webui/icmp inbound to 10.0.10.4-.5"
+    comment = "LXC-FW-001..006: DNS/NTP/webui/ssh/icmp inbound to 10.0.10.4-.5"
     rules = [
       {
         comment = "LXC-FW-001 dns-inbound"
@@ -198,7 +198,15 @@ firewall_security_groups = {
         dport   = "5380"
       },
       {
-        comment = "LXC-FW-005 admin-to-core-infra-icmp"
+        comment = "LXC-FW-005 admin-to-core-infra-ssh"
+        type    = "in"
+        action  = "ACCEPT"
+        source  = "10.0.10.0/24"
+        proto   = "tcp"
+        dport   = "22"
+      },
+      {
+        comment = "LXC-FW-006 admin-to-core-infra-icmp"
         type    = "in"
         action  = "ACCEPT"
         source  = "10.0.10.0/24"

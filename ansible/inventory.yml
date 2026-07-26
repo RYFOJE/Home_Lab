@@ -1,0 +1,22 @@
+---
+# Mirrors core_infra in terraform/20-proxmox/terraform.tfvars; the addresses
+# themselves are fixed by documentation/networking/allocations.md.
+#
+# Static rather than generated from terraform output: recovering DNS must not
+# depend on Azure being reachable, and a stale address here fails immediately on
+# connect instead of silently configuring the wrong host.
+#
+# Group order is load-bearing -- the play runs serial and the secondary's zones
+# transfer from the primary, so dns_primary must come first.
+all:
+  children:
+    core_infra:
+      children:
+        dns_primary:
+          hosts:
+            core-infra-1:
+              ansible_host: 10.0.10.4
+        dns_secondary:
+          hosts:
+            core-infra-2:
+              ansible_host: 10.0.10.5

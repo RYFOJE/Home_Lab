@@ -1,0 +1,51 @@
+---
+- name: Ensure the installer's dependencies are present
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - tar
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Check whether the DNS server is already installed
+  ansible.builtin.stat:
+    path: "{{ technitium_service_unit }}"
+  register: technitium_unit
+
+# There is no apt repository for Technitium; the official installer is the only
+# supported path on Debian. Guarded on the systemd unit rather than a file inside
+# the install directory, whose layout changes between releases.
+- name: Download the installer
+  ansible.builtin.get_url:
+    url: "{{ technitium_installer_url }}"
+    dest: /tmp/technitium-install.sh
+    mode: "0755"
+  when: not technitium_unit.stat.exists
+
+- name: Run the installer
+  ansible.builtin.command: /tmp/technitium-install.sh
+  when: not technitium_unit.stat.exists
+  changed_when: true
+
+- name: Remove the installer script
+  ansible.builtin.file:
+    path: /tmp/technitium-install.sh
+    state: absent
+  when: not technitium_unit.stat.exists
+
+- name: Ensure the service is enabled and running
+  ansible.builtin.systemd_service:
+    name: dns
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# The service reports started well before the HTTP listener accepts connections;
+# every task after this one is an API call.
+- name: Wait for the API to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 5380
+    timeout: 120

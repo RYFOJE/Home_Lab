@@ -1,0 +1,48 @@
+name: dns-records-check
+
+# The A records of home.arpa restate the Address Assignments table in
+# documentation/networking/allocations.md, which is authoritative for
+# addressing. The two are separate files by necessity -- one is the design
+# document, the other is what Ansible applies -- and nothing at run time
+# notices when they disagree.
+#
+# The failure this catches is quiet by construction: a device added to the table
+# but not to technitium_infra_records simply has no name, and the symptom
+# arrives later as something that will not resolve, far from the change that
+# caused it. The reverse case is worse -- a record left pointing at an address
+# the table has since moved answers with a stale address rather than not
+# answering at all.
+#
+# Both directions are checked, plus the exemption list for the host rows that
+# deliberately carry no record (documentation/infrastructure/core_infra.md).
+on:
+  pull_request:
+    paths:
+      - "documentation/networking/allocations.md"
+      - "ansible/group_vars/**"
+      - "scripts/check_dns_records.py"
+      - ".github/workflows/dns-records-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "documentation/networking/allocations.md"
+      - "ansible/group_vars/**"
+      - "scripts/check_dns_records.py"
+      - ".github/workflows/dns-records-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - run: pip install pyyaml
+
+      - run: python scripts/check_dns_records.py

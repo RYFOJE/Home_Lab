@@ -13,6 +13,10 @@ vault by External Secrets Operator (`kubernetes/apps/security/external-secrets`)
 namespace cannot read another's secrets (`programming/gitops_apps.md`). The three secrets
 consumed directly by Terraform to bootstrap that path (below) are unprefixed.
 
+The core-infra DNS servers are a third path: they are not a Terraform layer and hold no
+in-cluster identity, so `ansible/` reads its two secrets on the control node with
+`az keyvault secret show` (`infrastructure/core_infra.md`).
+
 **Terraform creates exactly one Secret in the cluster**: `azure-kv-creds` in the
 `external-secrets` namespace (60-argo-cd `gitops.tf`), the credential ESO cannot fetch for
 itself. Everything else, including the Cloudflare token cert-manager's DNS-01 solver reads,
@@ -35,9 +39,10 @@ az keyvault secret set --vault-name rj-london --name <name> --value <value>
 | `wlan-passphrase-home-iot` | `10-network` | WPA2 passphrase for the `home-iot` SSID (VLAN 15, smart-home devices) |
 | `wlan-passphrase-home-mgmt` | `10-network` | WPA3 passphrase for the `home-mgmt` SSID (VLAN 10). Joining this SSID grants full management access — the passphrase is an admin credential |
 | `proxmox-api-token` | `20-proxmox` | Proxmox VE API token for the bpg/proxmox provider, full form `user@realm!tokenid=<uuid>` |
+| `technitium-admin-password` | `ansible/` (core-infra) | Admin account for the Technitium web console (5380, LXC-FW-004) and the API the playbook configures the server through. Read on the control node with `az keyvault secret show`, not by Terraform — the DNS servers are not a Terraform-managed layer (`infrastructure/core_infra.md`). Set it before the first run: the playbook replaces the shipped `admin`/`admin` with this value and the default never survives |
 | `cert-manager--cloudflare-dns-api-token` | ESO (`cert-manager`), `50-cloudflare` | Cloudflare API token for cert-manager's ACME DNS-01 solver and for 50-cloudflare (tunnel + public DNS records). Scopes: Zone → DNS → Edit and Zone → Zone → Read on the public domain's zone only, plus Account → Cloudflare Tunnel → Edit (the tunnel token data source requires Edit, not Read). Carries the `cert-manager--` prefix because that is the namespace ESO syncs it into, which is what the Kyverno prefix rule checks; 50-cloudflare reading the same secret by that name is deliberate — one authoritative copy beats two that can drift. 40-kube-networking no longer reads it at all, so the token is not in that layer's state |
 | `cloudflare-account-id` | `50-cloudflare` | Cloudflare account ID owning the tunnel and the zone. Treated as a secret alongside the domain (PII rule) |
-| `public-domain` | `40-kube-networking`, `50-cloudflare`, `60-argo-cd` | The owned public domain served by the Traefik edge (wildcard certificate, split-horizon DNS). Stored as a secret because domain names are treated as PII in this repo |
+| `public-domain` | `40-kube-networking`, `50-cloudflare`, `60-argo-cd`, `ansible/` | The owned public domain served by the Traefik edge (wildcard certificate, split-horizon DNS). Stored as a secret because domain names are treated as PII in this repo. The Ansible consumer is the internal half of the split horizon — the zone Technitium hosts for it (`infrastructure/core_infra.md`) |
 | `cert-manager--cloudflare-dns-api-token` *(in-cluster path)* | ESO (`cluster-secrets`) | Same secret as the row above, reached the other way: `kubernetes/apps/security/cluster-secrets` renders an `ExternalSecret` into the `cert-manager` namespace, which ESO syncs into the `cloudflare-api-token` Secret the `letsencrypt` ClusterIssuer's DNS-01 solver reads. Rotating the token is therefore a vault edit; cert-manager picks it up within `refreshInterval` |
 | `acme-email` | `40-kube-networking` | Contact email for the Let's Encrypt ACME account (expiry/problem notices). The only Cloudflare/ACME value 40-kube-networking still reads |
 | `argocd-admin-password-bcrypt` | `60-argo-cd` | Pre-computed bcrypt hash of the ArgoCD UI admin password, set verbatim on the chart (`configs.secret.argocdServerAdminPassword`). Stored as the hash, not the plaintext, because Terraform's `bcrypt()` generates a new salt every plan and would roll the release on every apply. Generate with `argocd account bcrypt --password <pw>` |

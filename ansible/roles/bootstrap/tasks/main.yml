@@ -1,0 +1,22 @@
+---
+# Proxmox LXCs have no cloud-init, so nothing has run inside the container before
+# this point. Both tasks are raw: there is no guarantee of a Python interpreter
+# yet, and no guarantee that a name resolves.
+
+# 20-proxmox points resolv.conf at the core-infra addresses themselves. On a new
+# container nothing answers there, so apt and download.technitium.com fail until
+# this is swapped. FW-013 is what permits .4/.5 to query a public resolver
+# directly -- VLAN 11 carries no equivalent allow, which is why the Talos nodes
+# cannot be bootstrapped this way and DNS must exist before 30-talos.
+- name: Point resolv.conf at the bootstrap resolver
+  ansible.builtin.raw: printf 'nameserver %s\n' '{{ bootstrap_resolver }}' > /etc/resolv.conf
+  changed_when: false
+
+- name: Ensure a Python interpreter is present
+  ansible.builtin.raw: >-
+    test -x /usr/bin/python3 ||
+    (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3)
+  changed_when: false
+
+- name: Gather facts
+  ansible.builtin.setup:

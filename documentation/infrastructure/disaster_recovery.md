@@ -37,8 +37,9 @@ rebuild of layers 30→60. Everything else has a path back.
 | Need | Why |
 |---|---|
 | `az login` | Every layer's backend and secret lookups |
-| A machine on **VLAN 10** | FW-003 (kube API), FW-003-talos (Talos API), FW-006 (router), PVE-FW-002/003 (Proxmox) permit admin access from that VLAN only. PVE runs `input_policy = DROP` — applying 20-proxmox from anywhere else locks out the API mid-apply |
+| A machine on **VLAN 10** | FW-003 (kube API), FW-003-talos (Talos API), FW-006 (router), PVE-FW-002/003 (Proxmox), LXC-FW-005 (SSH to the core-infra LXCs) permit admin access from that VLAN only. PVE runs `input_policy = DROP` — applying 20-proxmox from anywhere else locks out the API mid-apply |
 | This repo | `git clone`, then `cd terraform/<layer>` per step |
+| `ansible-core` ≥ 2.15 | Step 3 of a full rebuild (`core_infra.md`) |
 
 ---
 
@@ -135,7 +136,7 @@ the node VMs are still reachable; there is no restore path afterwards.
 flowchart LR
     P[0. Physical<br/>+ UniFi bootstrap] --> N[1. 10-network]
     N --> X[2. 20-proxmox]
-    X --> M[3. DNS/NTP<br/>MANUAL]
+    X --> M[3. core-infra DNS<br/>ansible + manual chrony]
     M --> T[4. 30-talos]
     T --> K[5. 40-kube-net]
     K --> L[6. Longhorn target<br/>MANUAL]
@@ -156,7 +157,7 @@ Steps 4 and 5 run **back to back** — between them the cluster looks broken by 
 | 0 | Physical + UniFi | `unifi-password`, `wlan-passphrase-home{,-iot,-mgmt}` | See `../networking/physical_network.md` "Bootstrap" |
 | 1 | `10-network` | *(above)* | Switch on `10.0.10.2`, AP on `10.0.10.6`, 3 SSIDs up |
 | 2 | `20-proxmox` | `proxmox-api-token` | 3 VMs + 2 LXCs running |
-| 3 | **DNS/NTP — manual** | — | `dig @10.0.10.4` and `@10.0.10.5` answer |
+| 3 | **core-infra DNS** — `ansible/` | `technitium-admin-password`, `public-domain` | `dig @10.0.10.4` and `@10.0.10.5` answer |
 | 4 | `30-talos` | — *(writes 2)* | Nodes exist and are **NotReady** — correct, no CNI yet |
 | 5 | `40-kube-networking` | `public-domain`, `acme-email` | All 3 nodes Ready; the three `platform-*` PriorityClasses exist; both Traefik Services hold their LB IPs. The wildcard cert is **Pending** — correct, see below |
 | 6 | **Longhorn target — manual** | — | Backup target connected; volumes restored |
@@ -171,10 +172,13 @@ Each layer is `cd terraform/<layer> && terraform init && terraform apply`.
 - **Step 2** — `storage.tf` imports the `local` datastore and its `content` list *replaces*
   live config. Check `pvesm status` first. Talos VMs must not get qemu-guest-agent; enabling
   it hangs the apply.
-- **Step 3** — LXCs have no cloud-init, so Technitium (primary `.4`, secondary `.5`) and
-  chrony are installed by hand. **Not optional and not deferrable:** FW-001/002 block every
-  public resolver and NTP pool, so nodes booted before this exists never converge. Restore
-  zones from Technitium's own backup.
+- **Step 3** — LXCs have no cloud-init, so nothing configures a container's contents at
+  create time. Technitium (primary `.4`, secondary `.5`) is `cd ansible && ansible-playbook
+  core-infra.yml`; chrony is still by hand. **Not optional and not deferrable:** FW-001/002
+  block every public resolver and NTP pool, so nodes booted before this exists never
+  converge. The playbook recreates the zones and the records it manages
+  (`core_infra.md`) — anything added through the web console comes back only from
+  Technitium's own backup.
 - **Step 5** — on state predating the backend key rename, `terraform init -migrate-state`
   once. A plain `-reconfigure` starts from empty state and re-creates the layer. This layer
   also creates the `platform-*` PriorityClasses (`scheduling.tf`), which every later step
@@ -267,7 +271,7 @@ Without versioning, [Restore State](#restore-state) has nothing to restore from.
 | Longhorn volumes | Longhorn backup target → NFSv4 on PBS |
 | PostgreSQL | **nothing** — the cluster is replicated, not backed up (`databases.md`) |
 | VM/CT system disks | PBS jobs (Longhorn data disks excluded — `../networking/allocations.md`) |
-| Technitium zones + blocklists | Technitium config backup |
+| Technitium zones + blocklists | `ansible/` for the managed set; Technitium config backup for the rest |
 | UniFi controller config | Controller auto-backup (System > Backups) |
 | **The PBS datastore itself** | Off-site PBS sync or encrypted `rclone` push |
 | Key Vault | Soft-delete + purge protection |

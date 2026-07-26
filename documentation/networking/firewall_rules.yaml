@@ -585,6 +585,20 @@ rules:
       reachable from VLAN 13.
 
   - id: LXC-FW-005
+    name: admin-to-core-infra-ssh
+    layer: proxmox-host
+    category: required
+    action: allow
+    source: VLAN 10 (10.0.10.0/24)
+    destination: [10.0.10.4, 10.0.10.5]
+    protocol: [tcp]
+    ports: [22]
+    rationale: >
+      SSH for the Ansible play that configures Technitium (ansible/core-infra.yml) -- the
+      LXCs have no cloud-init, so this is the only path in. Restricted to the management
+      network, same posture as LXC-FW-004 - deliberately NOT reachable from VLAN 13.
+
+  - id: LXC-FW-006
     name: admin-to-core-infra-icmp
     layer: proxmox-host
     category: hardening

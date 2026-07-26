@@ -1,0 +1,67 @@
+---
+# Primary zones only. A secondary's contents arrive by transfer and writing them
+# directly would be discarded on the next refresh.
+
+- name: Read the current contents of each managed zone
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/zones/records/get"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_token }}"
+      domain: "{{ item.name }}"
+      zone: "{{ item.name }}"
+      listZone: "true"
+    timeout: "{{ technitium_api_timeout }}"
+  loop: "{{ technitium_zones }}"
+  loop_control:
+    label: "{{ item.type }}"
+  register: technitium_records_result
+  failed_when: technitium_records_result.json.status | default('error') != 'ok'
+  changed_when: false
+  no_log: "{{ technitium_no_log }}"
+
+# Indexed FQDN -> address so the add below runs only for records that are absent
+# or point somewhere else. Both response shapes are tolerated: the payload moved
+# under `response` across major versions and one of the two is always empty.
+- name: Index the existing A records
+  ansible.builtin.set_fact:
+    technitium_existing_a: >-
+      {{ dict(managed | map(attribute='name') | map('lower') | list
+              | zip(managed | map(attribute='rData.ipAddress') | list)) }}
+  vars:
+    all_records: >-
+      {{ (technitium_records_result.results | map(attribute='json.response.records', default=[]) | flatten)
+         + (technitium_records_result.results | map(attribute='json.records', default=[]) | flatten) }}
+    managed: "{{ all_records | selectattr('type', 'equalto', 'A') | list }}"
+  no_log: "{{ technitium_no_log }}"
+
+# overwrite, because an A record is multi-valued in DNS: a plain add against a
+# name that already exists appends a second address instead of correcting the
+# first one.
+- name: Add or correct the managed A records
+  ansible.builtin.uri:
+    url: "{{ technitium_api_url }}/api/zones/records/add"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_token }}"
+      domain: "{{ record_fqdn }}"
+      zone: "{{ item.0.name }}"
+      type: A
+      ipAddress: "{{ item.1.ip }}"
+      ttl: "{{ technitium_record_ttl }}"
+      overwrite: "true"
+    timeout: "{{ technitium_api_timeout }}"
+  loop: "{{ technitium_zones | subelements('records') }}"
+  loop_control:
+    label: "{{ item.1.ip }}"
+  vars:
+    record_fqdn: >-
+      {{ (item.1.name == '@') | ternary(item.0.name, item.1.name ~ '.' ~ item.0.name) | lower }}
+  when: technitium_existing_a[record_fqdn] | default('') != item.1.ip
+  register: technitium_record_add
+  failed_when:
+    - technitium_record_add is not skipped
+    - technitium_record_add.json.status | default('error') != 'ok'
+  no_log: "{{ technitium_no_log }}"

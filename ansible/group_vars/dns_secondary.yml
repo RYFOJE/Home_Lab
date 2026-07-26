@@ -1,0 +1,17 @@
+---
+technitium_zone_role: secondary
+
+# Records are not managed here: a secondary zone's contents arrive by transfer
+# from the primary, and writing them directly would be overwritten on the next
+# refresh.
+technitium_zones:
+  - name: "{{ technitium_infra_zone }}"
+    type: Secondary
+    extra:
+      primaryNameServerAddresses: "{{ technitium_primary_ip }}"
+    records: []
+  - name: "{{ technitium_public_domain }}"
+    type: Secondary
+    extra:
+      primaryNameServerAddresses: "{{ technitium_primary_ip }}"
+    records: []
