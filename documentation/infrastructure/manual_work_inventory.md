@@ -54,7 +54,7 @@ Terraform, Ansible, and GitOps ownership boundaries are defined in [GitOps appli
 | Export Talos break-glass credentials to local files during recovery. | Necessary emergency action; dangerous; security-sensitive | Operator | Restricted temporary storage, explicit cleanup, audit trail, and credential rotation after use. | Operations vault access |
 | Restore Terraform state, import or move resources, or select an earlier backend-state version. | Necessary emergency/migration action; dangerous | Operator | Saved backup, exact resource targeting, peer review, and post-operation plan. | State backend recovery |
 | Delete failed pods/PVCs or clear Longhorn orphan state. | Necessary emergency action; dangerous | Operator | Exact object selection, backup verification, and documented decision gate. | Storage incident |
-| Choose Talos single-node replacement, etcd quorum recovery, or full new-cluster recovery. | Necessary emergency decision; dangerous | Operator | Separate tested runbooks for each path. | Incident classification and backups |
+| Choose Talos single-node replacement, etcd quorum recovery, or full new-cluster recovery. | Necessary emergency decision; dangerous | Operator | Entry conditions and separate procedures for all four Talos recovery paths, [disaster_recovery.md](disaster_recovery.md#talos-recovery-paths). | Incident classification and backups |
 | Perform etcd, CNPG PITR, Longhorn volume, Git, vault, and Terraform-state restore drills. | Necessary | Operator | Scheduled evidence-producing recovery exercise. | Automated backups |
 | Verify backup freshness, restore success, retention, immutability, and off-site copy. | Automatable | Manual/absent | Monitoring, alerting, and periodic restore test evidence. | Backup platform |
 
