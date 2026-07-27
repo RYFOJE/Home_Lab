@@ -15,17 +15,19 @@ key_vault_resource_group_name = "terraform"
 
 cluster_name = "london"
 
-# Pinned deliberately, like every chart version in this repo. This is the
-# default Kubernetes version for the pinned Talos release
-# (DefaultKubernetesVersion in siderolabs/talos v1.13.7), so pinning it changes
-# nothing about an already-built cluster -- it only stops a future provider
-# build from moving the version silently. Talos v1.13 supports the six minors
-# back from that default.
+# Pinned deliberately, like every chart version in this repo. Talos v1.13's
+# own default (DefaultKubernetesVersion) is v1.36.2, but Cilium 1.19 -- the
+# cluster's sole CNI and kube-proxy replacement -- does not yet list 1.36 in
+# its e2e-tested compatibility set, only 1.32-1.35. This pin holds one minor
+# below the Talos default for exactly that reason: the Talos and Cilium
+# support windows, not release recency, decide the version
+# (documentation/infrastructure/upgrades.md, "Kubernetes / Cilium / Longhorn
+# compatibility"; checked by scripts/check_version_compatibility.py).
 #
 # Bumping it is an in-place control-plane upgrade with its own procedure --
 # see ../../documentation/infrastructure/upgrades.md. Bump it in the same
 # change as talos_version only when the new Talos release requires it.
-kubernetes_version = "v1.36.2"
+kubernetes_version = "v1.35.7"
 
 # Longhorn v2 data engine. Off: the node prerequisites cost 2 GiB of RAM per
 # node in reserved hugepages, and nothing in this cluster uses the engine.

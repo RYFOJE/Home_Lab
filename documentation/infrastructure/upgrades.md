@@ -118,7 +118,7 @@ Talos v1.13 supports the six minor versions back from its own default. Upgrade
 one minor at a time.
 
 ```bash
-talosctl --talosconfig talosconfig --nodes 10.1.11.11 upgrade-k8s --to 1.36.2
+talosctl --talosconfig talosconfig --nodes 10.1.11.11 upgrade-k8s --to 1.35.7
 ```
 
 Run it **once**, against one node — `upgrade-k8s` orchestrates the whole
@@ -132,6 +132,50 @@ deprecated API version, but chart CRDs move independently:
 ```bash
 kubectl get --raw /metrics | grep apiserver_requested_deprecated_apis
 ```
+
+### Kubernetes / Cilium / Longhorn compatibility
+
+Three vendor-declared support windows bound `kubernetes_version`, independent
+of Talos's own default and independent of any chart's release recency:
+
+- **Talos v1.13** supports Kubernetes 1.31-1.36
+  (docs.siderolabs.com/talos/v1.13/getting-started/support-matrix, retrieved
+  2026-07-26).
+- **Cilium 1.19** — this cluster's sole CNI and kube-proxy replacement
+  (`terraform/40-kube-networking/cilium.tf`) — e2e-tests and guarantees
+  compatibility with Kubernetes 1.32-1.35 only; 1.36 is not in that set
+  (docs.cilium.io/en/stable/network/kubernetes/compatibility/, retrieved
+  2026-07-26). Cilium 1.20 was still a release candidate on that date, so no
+  newer stable minor covers 1.36 either.
+- **Longhorn 1.12.0** declares a floor, not a ceiling: Kubernetes 1.25 or
+  later (longhorn.io/docs/1.12.0/important-notes/, retrieved 2026-07-26).
+
+The intersection of the three is Kubernetes 1.32-1.35. `kubernetes_version` is
+pinned to the newest patch in that intersection, `v1.35.7` — one minor below
+Talos's own `DefaultKubernetesVersion`, because Talos's default tracks Talos's
+release cadence, not Cilium's. `azdo_agent_kubectl_version`
+(`ansible/roles/azdo_agent/defaults/main.yml`) moves with it, per the
+Azure DevOps agents section above.
+
+`scripts/check_version_compatibility.py` encodes this table as data (not
+prose) and fails when `talos_version`, `kubernetes_version`,
+`cilium_chart_version`, or `longhorn_chart_version` no longer sit inside it —
+including a Renovate-proposed `cilium_chart_version` or
+`longhorn_chart_version` bump that would otherwise merge silently onto a
+Kubernetes version its own vendor has not tested.
+
+**Ownership.** The table in that script is hand-maintained, not derived from
+any API. Whoever bumps a Talos, Kubernetes, Cilium, or Longhorn pin owns
+re-verifying the table rows the bump touches — a chart's release notes reading
+well, or Renovate having opened the PR, is not evidence on its own.
+
+**Evidence to extend a row.** A primary vendor source, read at the time of the
+change, that states the versions it tests or requires — not a changelog
+inference, not "adjacent version numbers usually work." That means Talos's own
+`getting-started/support-matrix` page for the target release, Cilium's
+`network/kubernetes/compatibility` page for the target release, and Longhorn's
+`important-notes` page for the target release. Record the URL and the
+retrieval date in this section, not as a script comment, when a row changes.
 
 ---
 
