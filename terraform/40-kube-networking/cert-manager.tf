@@ -34,7 +34,7 @@ resource "kubernetes_namespace" "cert_manager" {
 resource "helm_release" "cert_manager" {
   # values/cert-manager.yaml names platform-critical; a pod naming a class that
   # does not exist is rejected at admission (scheduling.tf).
-  depends_on = [helm_release.cilium, local.priority_classes]
+  depends_on = [data.talos_cluster_health.post_cilium, local.priority_classes]
 
   name       = "cert-manager"
   repository = "https://charts.jetstack.io"

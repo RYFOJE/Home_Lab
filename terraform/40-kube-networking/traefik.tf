@@ -56,7 +56,7 @@ resource "kubernetes_namespace" "traefik_crds" {
 }
 
 resource "helm_release" "traefik_crds" {
-  depends_on = [helm_release.cilium]
+  depends_on = [data.talos_cluster_health.post_cilium]
 
   name             = "traefik-crds"
   repository       = "https://traefik.github.io/charts"
@@ -79,7 +79,7 @@ module "traefik_external" {
   forwarded_headers_trusted_ips = local.cloudflare_ipv4
 
   depends_on = [
-    helm_release.cilium,
+    data.talos_cluster_health.post_cilium,
     helm_release.traefik_crds,
     kubectl_manifest.letsencrypt_issuer,
     # values/traefik.yaml names platform-critical (scheduling.tf).
@@ -97,7 +97,7 @@ module "traefik_internal" {
   base_values   = local.traefik_base_values
 
   depends_on = [
-    helm_release.cilium,
+    data.talos_cluster_health.post_cilium,
     helm_release.traefik_crds,
     kubectl_manifest.letsencrypt_issuer,
     local.priority_classes,

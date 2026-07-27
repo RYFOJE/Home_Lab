@@ -37,12 +37,26 @@ data "terraform_remote_state" "talos" {
 }
 
 locals {
-  kubeconfig = yamldecode(data.terraform_remote_state.talos.outputs.kubeconfig)
+  kubeconfig  = yamldecode(data.terraform_remote_state.talos.outputs.kubeconfig)
+  talosconfig = yamldecode(data.terraform_remote_state.talos.outputs.talosconfig)
 
   kube_host           = local.kubeconfig.clusters[0].cluster.server
   kube_ca_certificate = base64decode(local.kubeconfig.clusters[0].cluster["certificate-authority-data"])
   kube_client_cert    = base64decode(local.kubeconfig.users[0].user["client-certificate-data"])
   kube_client_key     = base64decode(local.kubeconfig.users[0].user["client-key-data"])
+
+  talos_context = local.talosconfig.contexts[local.talosconfig.context]
+
+  # No base64decode, unlike the kubeconfig fields above: the talos provider takes
+  # client_configuration in the same base64 form the talosconfig stores it in and
+  # decodes it itself. Handing it PEM fails the read with "illegal base64 data at
+  # input byte 0" before any node is contacted.
+  talos_client_configuration = {
+    ca_certificate     = local.talos_context.ca
+    client_certificate = local.talos_context.crt
+    client_key         = local.talos_context.key
+  }
+  node_ips = sort(values(data.terraform_remote_state.talos.outputs.node_ips))
 
   # eth1 IPs on VLAN 12; excluded from the whereabouts range in multus.tf
   node_storage_ips = data.terraform_remote_state.talos.outputs.node_storage_ips

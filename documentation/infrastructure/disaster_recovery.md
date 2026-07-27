@@ -153,7 +153,10 @@ flowchart LR
     style K fill:#1f6f8b,color:#fff
 ```
 
-Steps 4 and 5 run **back to back** — between them the cluster looks broken by design.
+Steps 4 and 5 run **back to back**. Layer 30 finishes at the pre-CNI health gate after
+Talos, the Kubernetes API, and etcd are healthy; Kubernetes node readiness is deliberately
+deferred. Layer 40 installs Cilium, then its post-Cilium health gate requires the Kubernetes
+checks to pass before the remaining networking resources continue.
 
 | # | Layer | Key Vault secrets needed first | Verify before continuing |
 |---|---|---|---|
@@ -161,8 +164,8 @@ Steps 4 and 5 run **back to back** — between them the cluster looks broken by 
 | 1 | `10-network` | *(above)* | Switch on `10.0.10.2`, AP on `10.0.10.6`, 3 SSIDs up |
 | 2 | `20-proxmox` | `proxmox-api-token` | 3 VMs + 4 LXCs running |
 | 3 | **core-infra DNS** — `ansible/` | `technitium-admin-password`, `public-domain` | `dig @10.0.10.4` and `@10.0.10.5` answer |
-| 4 | `30-talos` | — *(writes 2)* | Nodes exist and are **NotReady** — correct, no CNI yet |
-| 5 | `40-kube-networking` | `public-domain`, `acme-email` | All 3 nodes Ready; the three `platform-*` PriorityClasses exist; both Traefik Services hold their LB IPs. The wildcard cert is **Pending** — correct, see below |
+| 4 | `30-talos` | — *(writes 2)* | Pre-CNI health gate passes: Talos, the Kubernetes API, and etcd are healthy; nodes exist and are **NotReady** — correct, no CNI yet |
+| 5 | `40-kube-networking` | `public-domain`, `acme-email` | Post-Cilium health gate passes with all 3 nodes Ready; the three `platform-*` PriorityClasses exist; both Traefik Services hold their LB IPs. The wildcard cert is **Pending** — correct, see below |
 | 6 | **Longhorn target — manual** | — | Backup target connected; volumes restored |
 | 7 | `50-cloudflare` | `cert-manager--cloudflare-dns-api-token`, `cloudflare-account-id`, `public-domain` | Tunnel healthy; `cloudflared--tunnel-token` written |
 | 8 | `60-argo-cd` | `argocd-admin-password-bcrypt`, `azure-kv-sp-client-id`, `azure-kv-sp-client-secret`, `public-domain` | ArgoCD UI reachable over the wildcard cert once step 9 has issued it |

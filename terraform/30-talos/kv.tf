@@ -16,11 +16,11 @@
 # clear, which is why the state backend is the thing to protect first
 # (documentation/infrastructure/disaster_recovery.md, "State backend hardening").
 #
-# Not inputs to any Terraform layer: downstream layers keep consuming the
-# kubeconfig through terraform_remote_state exactly as before. The kubeconfig
-# does have one automated reader outside Terraform -- ansible/azdo-agent.yml
-# uses it for a single `kubectl get secret` on the control node
-# (documentation/infrastructure/azdo_agents.md). talosconfig has none.
+# Layer 40 consumes both client configurations through terraform_remote_state
+# for its post-Cilium health gate. The kubeconfig also has one automated reader
+# outside Terraform -- ansible/azdo-agent.yml uses it for a single
+# `kubectl get secret` on the control node
+# (documentation/infrastructure/azdo_agents.md).
 #
 # Unprefixed names: the `<namespace>--<name>` convention applies to secrets ESO
 # syncs into the cluster. These are never synced -- reading them is otherwise a

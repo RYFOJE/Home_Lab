@@ -5,7 +5,7 @@ output "kubeconfig" {
 }
 
 output "talosconfig" {
-  description = "Client config for talosctl (talosctl --talosconfig <this> ...)."
+  description = "Talos client config. Consumed by layer 40-kube-networking for the post-Cilium health gate."
   value       = data.talos_client_configuration.this.talos_config
   sensitive   = true
 }

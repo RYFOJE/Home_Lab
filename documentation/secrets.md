@@ -68,8 +68,12 @@ kubeconfig) are generated into Terraform state and passed between layers via
 `terraform_remote_state`. It is the only layer that writes to the vault without reading
 from it: `talos-talosconfig` and `talos-kubeconfig` above are break-glass copies, so the
 one layer whose state is unrecoverable is not also the one layer whose credentials are.
-`talos-talosconfig` has stayed break-glass-only; `talos-kubeconfig` has one routine reader
-(the row above), and the asymmetry is deliberate — node-level control never became routine.
+Neither vault copy has a routine reader: `talos-kubeconfig` has one (the row above), and
+`talos-talosconfig` none. The talosconfig credential itself is not break-glass-only —
+40-kube-networking consumes it through `terraform_remote_state` for its post-Cilium health
+gate, so `40-kube-networking.tfstate` holds Talos node-level PKI alongside the
+cluster-admin kubeconfig it already held. Retrieving the *vault* copy is still an
+operator action, and that is the boundary the row above describes.
 The machine secrets themselves are deliberately **not** copied — they are the cluster's
 root of trust, and a second copy is a second thing to compromise for no recovery benefit
 (holding them without the state file still does not let Terraform manage the cluster).

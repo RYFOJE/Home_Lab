@@ -164,16 +164,19 @@ resource "talos_cluster_kubeconfig" "this" {
   node                 = local.node_ips[0]
 }
 
-# Gate the layer on the cluster actually being healthy rather than on the API
-# having answered once. Without it this layer reports success the moment
-# bootstrap returns, and 40-kube-networking -- which is meant to run straight
-# after -- starts against an API that is not serving yet. It is also what turns
-# a concurrent reboot of all three control-plane nodes into a failed apply
-# instead of a silent one.
-data "talos_cluster_health" "this" {
+# Gate the layer on Talos, etcd and the API actually being healthy rather than
+# on the API having answered once. It is what turns a concurrent reboot of all
+# three control-plane nodes into a failed apply instead of a silent one
+# (documentation/infrastructure/upgrades.md).
+#
+# Kubernetes checks are skipped: this layer leaves CNI `none`, so nodes stay
+# NotReady until 40-kube-networking installs Cilium and no Kubernetes check can
+# pass here on a fresh build. That half of the gate is the post-Cilium one.
+data "talos_cluster_health" "pre_cni" {
   depends_on = [talos_cluster_kubeconfig.this]
 
-  client_configuration = talos_machine_secrets.this.client_configuration
-  endpoints            = local.node_ips
-  control_plane_nodes  = local.node_ips
+  client_configuration   = talos_machine_secrets.this.client_configuration
+  endpoints              = local.node_ips
+  control_plane_nodes    = local.node_ips
+  skip_kubernetes_checks = true
 }

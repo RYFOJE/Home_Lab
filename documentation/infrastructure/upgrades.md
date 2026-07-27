@@ -96,9 +96,10 @@ cd terraform/30-talos && terraform apply -target='talos_machine_configuration_ap
 ```
 
 Wait for the node to rejoin, repeat for each, then run a bare `terraform apply`
-to settle the rest of the layer. The `talos_cluster_health` data source is what
-makes a full-blast apply fail loudly rather than return success against a
-cluster that has not come back.
+to settle the rest of the layer. Layer 30's pre-CNI `talos_cluster_health` gate
+makes a full-blast apply fail if Talos, the Kubernetes API, or etcd has not come
+back; it deliberately leaves Kubernetes node readiness to the post-Cilium gate
+in 40-kube-networking.
 
 `longhorn_v2_data_engine` is one of these: it reserves 1024 hugepages per node
 and reboots. Flipping it means 30-talos node-by-node, then 40-kube-networking,

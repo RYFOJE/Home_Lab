@@ -23,6 +23,17 @@ resource "helm_release" "cilium" {
   values = [file("${path.module}/values/cilium.yaml")]
 }
 
+# Layer 30 can only gate Talos, the Kubernetes API, and etcd because Cilium does
+# not exist there; this is the matching Kubernetes-ready gate after the CNI.
+data "talos_cluster_health" "post_cilium" {
+  depends_on = [helm_release.cilium]
+
+  client_configuration   = local.talos_client_configuration
+  endpoints              = local.node_ips
+  control_plane_nodes    = local.node_ips
+  skip_kubernetes_checks = false
+}
+
 # LoadBalancer pool per allocations.md: 10.1.11.50 - 10.1.11.249 on VLAN 11.
 #
 # cilium.io/v2, not v2alpha1: this CRD was promoted to v2 in Cilium 1.16 and the
@@ -32,7 +43,7 @@ resource "helm_release" "cilium" {
 # versions differing here is correct, not an oversight. Re-check both on a
 # Cilium major bump.
 resource "kubectl_manifest" "lb_pool" {
-  depends_on = [helm_release.cilium]
+  depends_on = [data.talos_cluster_health.post_cilium]
 
   yaml_body = yamlencode({
     apiVersion = "cilium.io/v2"
@@ -56,7 +67,7 @@ resource "kubectl_manifest" "lb_pool" {
 # of whether it runs a backend, so a `Local` Service is silently black-holed on
 # every node that does not (values/traefik.yaml).
 resource "kubectl_manifest" "l2_announcements" {
-  depends_on = [helm_release.cilium]
+  depends_on = [data.talos_cluster_health.post_cilium]
 
   yaml_body = yamlencode({
     apiVersion = "cilium.io/v2alpha1"

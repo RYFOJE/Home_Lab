@@ -29,5 +29,9 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
+    talos = {
+      source  = "siderolabs/talos"
+      version = "~> 0.11"
+    }
   }
 }
