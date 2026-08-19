@@ -5,7 +5,7 @@
 # so a failed assertion is the signal to repin, not a fault
 # (documentation/infrastructure/upgrades.md).
 # renovate: datasource=github-releases depName=microsoft/azure-pipelines-agent extractVersion=^v(?<version>.+)$
-azdo_agent_version: "5.275.0"
+azdo_agent_version: "5.277.0"
 
 # vstsagentpackage.azureedge.net was retired with Edgio; this is the current
 # distribution host.
