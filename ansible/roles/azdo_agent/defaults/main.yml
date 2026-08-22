@@ -21,7 +21,7 @@ azdo_agent_group: azdo
 # kubectl supports one minor of skew, so this moves with a Kubernetes upgrade
 # (documentation/infrastructure/upgrades.md).
 # renovate: datasource=github-releases depName=kubernetes/kubernetes
-azdo_agent_kubectl_version: "v1.35.7"
+azdo_agent_kubectl_version: "v1.36.3"
 azdo_agent_kubectl_url: >-
   https://dl.k8s.io/release/{{ azdo_agent_kubectl_version }}/bin/linux/amd64/kubectl
 
