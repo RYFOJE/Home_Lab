@@ -28,7 +28,7 @@ azdo_agent_kubectl_url: >-
 # Tracks the pin in .github/workflows/cluster-policy-check.yml so an agent
 # renders a chart with the helm CI validated it with.
 # renovate: datasource=github-releases depName=helm/helm
-azdo_agent_helm_version: "v3.21.3"
+azdo_agent_helm_version: "v4.2.3"
 azdo_agent_helm_url: >-
   https://get.helm.sh/helm-{{ azdo_agent_helm_version }}-linux-amd64.tar.gz
 
