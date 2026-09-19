@@ -18,7 +18,7 @@ terraform {
     # (kv.tf). No secrets are read by this layer.
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      version = "~> 5.0"
     }
   }
 }
