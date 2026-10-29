@@ -33,7 +33,7 @@ azdo_agent_helm_url: >-
   https://get.helm.sh/helm-{{ azdo_agent_helm_version }}-linux-amd64.tar.gz
 
 # renovate: datasource=github-releases depName=mikefarah/yq
-azdo_agent_yq_version: "v4.53.3"
+azdo_agent_yq_version: "v4.54.1"
 azdo_agent_yq_url: >-
   https://github.com/mikefarah/yq/releases/download/{{ azdo_agent_yq_version }}/yq_linux_amd64
 
